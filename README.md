@@ -4,6 +4,8 @@
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
 </a>
 
+[![Tests](https://github.com/a01253316/Avocado-AI/actions/workflows/tests.yml/badge.svg)](https://github.com/a01253316/Avocado-AI/actions/workflows/tests.yml)
+
 Monitoring Water Stress in Avocado Orchards Using Multitemporal Satellite Imagery and AI-Based Analysis
 
 ## Project Organization
