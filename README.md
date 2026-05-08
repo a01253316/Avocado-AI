@@ -1,12 +1,21 @@
-# Water Stress in Avocado Orchards
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
+<h1 align="center">Water Stress in Avocado Orchards</h1>
+
+<p align="center">
+  <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+  </a>
 
-[![Tests](https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml/badge.svg?style=for-the-badge)](https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml)
+  <a href="https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml">
+    <img src="https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml/badge.svg?style=for-the-badge" alt="CI">
+  </a>
+</p>
 
-Monitoring Water Stress in Avocado Orchards Using Multitemporal Satellite Imagery and AI-Based Analysis
+<p align="center">
+  Monitoring Water Stress in Avocado Orchards Using Multitemporal Satellite Imagery and AI-Based Analysis
+</p>
+    
+
 
 ## Project Organization
 
