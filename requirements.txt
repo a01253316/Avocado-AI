@@ -1,3 +1,4 @@
+geopandas
 ipython
 jupyterlab
 loguru
