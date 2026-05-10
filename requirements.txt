@@ -1,5 +1,3 @@
-dagshub
-geopandas
 ipython
 jupyterlab
 loguru
