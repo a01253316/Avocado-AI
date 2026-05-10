@@ -4,6 +4,7 @@ jupyterlab
 loguru
 matplotlib
 mkdocs
+mlfow
 notebook
 numpy
 pandas
