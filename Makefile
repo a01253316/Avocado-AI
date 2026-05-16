@@ -1,88 +1,65 @@
-#################################################################################
-# GLOBALS                                                                       #
-#################################################################################
+.PHONY: setup download indices ts train evaluate report all clean
 
-PROJECT_NAME = Avocado AI
-PYTHON_VERSION = 3.10
-PYTHON_INTERPRETER = python
+# ── Configuración ─────────────────────────────────────────────────────────────
+CFG       = configs/base.yaml
+CRED      = configs/credentials.yaml
+PARCEL_ID ?= parcela_001
 
-#################################################################################
-# COMMANDS                                                                      #
-#################################################################################
+# ── Instalación ───────────────────────────────────────────────────────────────
+setup:
+	pip install -r requirements.txt
 
+# ── Pipeline completo ─────────────────────────────────────────────────────────
+all: download indices ts train evaluate report
 
-## Install Python dependencies
-.PHONY: requirements
-requirements:
-	$(PYTHON_INTERPRETER) -m pip install -U pip
-	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
-	
+# ── Descarga de imágenes Sentinel Hub ─────────────────────────────────────────
+download:
+	python -m src.ingestion.downloader
 
+download-test:
+	python -c "from src.ingestion.downloader import run_download; run_download(parcel_ids=['$(PARCEL_ID)'])"
 
+# ── Índices espectrales (ya calculados en el evalscript) ──────────────────────
+# Los índices se calculan en el Process API (evalscript) durante la descarga.
+# Este paso convierte los GeoTIFF en series temporales CSV/parquet.
+indices: ts
 
-## Delete all compiled Python files
-.PHONY: clean
+# ── Series temporales ─────────────────────────────────────────────────────────
+ts:
+	python -m src.processing.time_series
+	python -m src.processing.windows
+
+# ── Entrenamiento LSTM Autoencoder ────────────────────────────────────────────
+train:
+	python -m src.models.lstm_autoencoder
+
+train-fast:
+	python -c "\
+	import yaml; from pathlib import Path; \
+	cfg = yaml.safe_load(Path('$(CFG)').read_text()); \
+	cfg['model']['epochs'] = 10; \
+	import tempfile, os; \
+	tf = tempfile.NamedTemporaryFile(suffix='.yaml', delete=False, mode='w'); \
+	yaml.dump(cfg, tf); tf.close(); \
+	from src.models.lstm_autoencoder import train; train(tf.name)"
+
+# ── Evaluación: genera scores de anomalía ─────────────────────────────────────
+evaluate:
+	python -c "from src.models.lstm_autoencoder import train; print('Scores generados en data/models/lstm_ae/scores.parquet')"
+
+# ── Reportes con Claude multimodal ────────────────────────────────────────────
+report:
+	python -m src.reporting.llm_report
+
+report-parcel:
+	python -c "from src.reporting.llm_report import run_reports; run_reports(parcel_ids=['$(PARCEL_ID)'])"
+
+# ── Limpieza ──────────────────────────────────────────────────────────────────
 clean:
-	find . -type f -name "*.py[co]" -delete
-	find . -type d -name "__pycache__" -delete
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -name "*.pyc" -delete 2>/dev/null || true
 
-
-## Lint using ruff (use `make format` to do formatting)
-.PHONY: lint
-lint:
-	ruff format --check
-	ruff check
-
-## Format source code with ruff
-.PHONY: format
-format:
-	ruff check --fix
-	ruff format
-
-
-
-## Run tests
-.PHONY: test
-test:
-	python -m pytest tests
-
-
-## Set up Python interpreter environment
-.PHONY: create_environment
-create_environment:
-	
-	conda create --name $(PROJECT_NAME) python=$(PYTHON_VERSION) -y
-	
-	@echo ">>> conda env created. Activate with:\nconda activate $(PROJECT_NAME)"
-	
-
-
-
-#################################################################################
-# PROJECT RULES                                                                 #
-#################################################################################
-
-
-## Make dataset
-.PHONY: data
-data: requirements
-	$(PYTHON_INTERPRETER) avocado_ai/dataset.py
-
-
-#################################################################################
-# Self Documenting Commands                                                     #
-#################################################################################
-
-.DEFAULT_GOAL := help
-
-define PRINT_HELP_PYSCRIPT
-import re, sys; \
-lines = '\n'.join([line for line in sys.stdin]); \
-matches = re.findall(r'\n## (.*)\n[\s\S]+?\n([a-zA-Z_-]+):', lines); \
-print('Available rules:\n'); \
-print('\n'.join(['{:25}{}'.format(*reversed(match)) for match in matches]))
-endef
-export PRINT_HELP_PYSCRIPT
-
-help:
-	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+clean-data:
+	rm -rf data/raw/sentinel2/* data/processed/time_series/* \
+	       data/processed/windows/* data/models/ reports/
+	@echo "Datos limpios."

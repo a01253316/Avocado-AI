@@ -1,16 +1,30 @@
-ipython
-jupyterlab
-loguru
-matplotlib
-mkdocs
-notebook
-numpy
-pandas
-pip
-pytest
-python-dotenv
-ruff
-scikit-learn
-tqdm
-typer
--e .
+# Sentinel Hub
+sentinelhub>=3.10.0
+
+# Geoespacial
+geopandas>=0.14.0
+rasterio>=1.3.0
+shapely>=2.0.0
+fiona>=1.9.0
+pyproj>=3.6.0
+
+# Datos
+pandas>=2.0.0
+numpy>=1.26.0
+pyarrow>=14.0.0
+scikit-learn>=1.4.0
+joblib>=1.3.0
+
+# ML
+torch>=2.2.0
+
+# Tracking
+mlflow>=2.11.0
+
+# Reporting
+anthropic>=0.26.0
+OpenAI
+matplotlib>=3.8.0
+
+# Config
+pyyaml>=6.0.1

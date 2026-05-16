@@ -1,0 +1,54 @@
+project:
+  name: avocado-water-stress
+  region: sur_jalisco
+
+sentinel_hub:
+  base_url: "https://services.sentinel-hub.com"
+  instance_url: "https://services.sentinel-hub.com/api/v1"
+  catalog_url: "https://services.sentinel-hub.com/api/v1/catalog/1.0.0"
+  process_url: "https://services.sentinel-hub.com/api/v1/process"
+  collection: "sentinel-2-l2a"     # L2A = corrección atmosférica incluida
+
+data:
+  date_start: "2020-01-01"
+  date_end: "2025-12-31"
+  max_cloud_cover: 20              # % máximo de nubosidad
+  resolution: 10                   # metros por píxel
+  buffer_meters: 50                # buffer alrededor del centroide de parcela
+  bands: ["B04", "B08", "B8A", "B11", "B12", "SCL"]
+
+indices:
+  - NDVI    # Normalized Difference Vegetation Index
+  - NDWI    # Normalized Difference Water Index
+  - NDMI    # Normalized Difference Moisture Index
+  - EVI2    # Enhanced Vegetation Index 2
+  - SAVI    # Soil-Adjusted Vegetation Index
+  - MSI     # Moisture Stress Index
+  - NDII    # Normalized Difference Infrared Index
+
+time_series:
+  resample_days: 8                 # regularización cada 8 días
+  window_size: 46                  # timesteps por ventana (~1 año)
+  min_valid_observations: 12       # mínimo de imágenes válidas por parcela/año
+
+model:
+  lstm_hidden: 64
+  lstm_layers: 2
+  latent_dim: 32
+  dropout: 0.2
+  epochs: 300
+  batch_size: 64
+  lr: 0.001
+  anomaly_percentile: 95           # umbral de detección de estrés
+
+paths:
+  kml: "data/raw/parcelas.kml"
+  raw_sentinel: "data/raw/sentinel2"
+  time_series: "data/processed/time_series"
+  windows: "data/processed/windows"
+  outputs: "data/outputs"
+  reports: "reports"
+
+mlflow:
+  experiment_name: "avocado-water-stress"
+  tracking_uri: "file:./mlruns"           # cambiar a URL de DagsHub si se conecta
