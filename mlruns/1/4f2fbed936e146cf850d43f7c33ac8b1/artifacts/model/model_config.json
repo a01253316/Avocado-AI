@@ -1,0 +1,1 @@
+{"input_size": 17, "hidden_size": 64, "latent_dim": 32, "seq_len": 46, "num_layers": 2, "dropout": 0.2}

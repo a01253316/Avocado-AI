@@ -1,0 +1,14 @@
+artifact_uri: /Users/ayz/Downloads/avocado-water-stress 2/mlruns/842528533649892893/24e6c7bf7fd5432fae0b9efb6d618af6/artifacts
+end_time: 1778909625117
+entry_point_name: ''
+experiment_id: '842528533649892893'
+lifecycle_stage: active
+run_id: 24e6c7bf7fd5432fae0b9efb6d618af6
+run_name: lstm_autoencoder
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1778909590362
+status: 3
+tags: []
+user_id: ayz
