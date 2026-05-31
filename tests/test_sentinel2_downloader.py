@@ -17,6 +17,7 @@ from ingestion.sentinel2_downloader import (
     DownloadConfig,
     Parcel,
     STACSearcher,
+    _CDSESession,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,30 @@ class TestParcel:
 
 
 # ---------------------------------------------------------------------------
+# _CDSESession
+# ---------------------------------------------------------------------------
+class TestCDSESession:
+    def test_rebuild_auth_preserves_authorization_header(self):
+        """
+        _CDSESession.rebuild_auth no debe eliminar el header Authorization
+        aunque el hostname cambie (catalogue → download).
+
+        El comportamiento por defecto de requests.Session.rebuild_auth
+        elimina Authorization en redirects cross-domain → 401 en CDSE.
+        """
+        session  = _CDSESession()
+        prepared = MagicMock()
+        prepared.headers = {"Authorization": "Bearer mytoken", "Content-Type": "application/json"}
+        response = MagicMock()
+
+        session.rebuild_auth(prepared, response)
+
+        # El header debe seguir intacto después de rebuild_auth
+        assert "Authorization" in prepared.headers
+        assert prepared.headers["Authorization"] == "Bearer mytoken"
+
+
+# ---------------------------------------------------------------------------
 # BandDownloader
 # ---------------------------------------------------------------------------
 class TestBandDownloader:
@@ -177,38 +202,167 @@ class TestBandDownloader:
         result = downloader._already_downloaded(tmp_path, ["B02", "B04"])
         assert result is False
 
-    # ── _normalize_url ──────────────────────────────────────────────────────
+    # ── _parse_s3_uri ────────────────────────────────────────────────────────
 
-    def test_normalize_url_converts_s3_to_https(self):
-        """URI s3://eodata/ → URL HTTPS del gateway público de CDSE."""
-        downloader = BandDownloader(MagicMock())
+    def test_parse_s3_uri_real_cdse_path(self):
+        """Parsea el URI exacto que produjo el error 403."""
+        s3_uri = (
+            "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
+            "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
+            "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
+            "IMG_DATA/R10m/T13QFB_20260528T172721_B02_10m.jp2"
+        )
+        result = BandDownloader._parse_s3_uri(s3_uri)
+        assert result is not None
+        product_safe, sub_nodes = result
+        assert product_safe == (
+            "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE"
+        )
+        assert sub_nodes == [
+            "GRANULE",
+            "L2A_T13QFB_A057095_20260528T173319",
+            "IMG_DATA",
+            "R10m",
+            "T13QFB_20260528T172721_B02_10m.jp2",
+        ]
+
+    def test_parse_s3_uri_20m_band(self):
+        """Las bandas a 20 m (R20m) también se parsean correctamente."""
         s3_uri = (
             "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
             "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
             "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
             "IMG_DATA/R20m/T13QFB_20260528T172721_B11_20m.jp2"
         )
-        result = BandDownloader._normalize_url(s3_uri)
-        assert result.startswith("https://eodata.dataspace.copernicus.eu/")
-        assert "s3://" not in result
-        assert result.endswith("B11_20m.jp2")
+        result = BandDownloader._parse_s3_uri(s3_uri)
+        assert result is not None
+        _, sub_nodes = result
+        assert sub_nodes[-2] == "R20m"
+        assert sub_nodes[-1].endswith("B11_20m.jp2")
 
-    def test_normalize_url_passthrough_https(self):
-        """URLs HTTPS ya válidas se devuelven sin cambios."""
-        https_url = "https://zipper.dataspace.copernicus.eu/odata/v1/B02.jp2"
-        assert BandDownloader._normalize_url(https_url) == https_url
+    def test_parse_s3_uri_returns_none_for_https(self):
+        """URLs HTTPS pasan sin ser procesadas."""
+        https_url = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products/..."
+        assert BandDownloader._parse_s3_uri(https_url) is None
 
-    def test_normalize_url_passthrough_other_schemes(self):
-        """Otros esquemas no se tocan (comportamiento defensivo)."""
-        other = "ftp://example.com/file.jp2"
-        assert BandDownloader._normalize_url(other) == other
+    def test_parse_s3_uri_returns_none_for_malformed(self):
+        """URI sin .SAFE/ devuelve None."""
+        bad_uri = "s3://eodata/some/path/without/safe/dir/file.jp2"
+        assert BandDownloader._parse_s3_uri(bad_uri) is None
 
-    def test_download_file_resolves_s3_uri(self, tmp_path):
+    # ── _odata_node_url ──────────────────────────────────────────────────────
+
+    def test_odata_node_url_structure(self):
         """
-        _download_file debe convertir s3:// antes de llamar a requests.get.
+        URL OData Nodes apunta a catalogue.dataspace.copernicus.eu.
 
-        Sin _normalize_url, requests lanzaría:
-            "No connection adapters were found for 's3://...'"
+        catalogue es el único endpoint que implementa el traversal de Nodes.
+        Redirige a download.dataspace.copernicus.eu para el binario.
+        _CDSESession preserva el Bearer token en ese redirect → no más 401/422.
+        """
+        uuid         = "abc-123-def-456"
+        product_safe = "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB.SAFE"
+        sub_nodes    = ["GRANULE", "L2A_T13QFB", "IMG_DATA", "R10m", "B02_10m.jp2"]
+
+        url = BandDownloader._odata_node_url(uuid, product_safe, sub_nodes)
+
+        assert url.startswith(
+            "https://catalogue.dataspace.copernicus.eu/odata/v1/Products("
+        )
+        assert "download.dataspace.copernicus.eu" not in url
+        assert f"('{uuid}')" in url
+        assert f"Nodes('{product_safe}')" in url
+        assert "Nodes('GRANULE')" in url
+        assert "Nodes('B02_10m.jp2')" in url
+        assert url.endswith("/$value")
+
+    # ── _get_product_uuid ────────────────────────────────────────────────────
+
+    def test_get_product_uuid_success(self):
+        """UUID se extrae del JSON de OData y se cachea."""
+        auth       = MagicMock()
+        auth.headers.return_value = {"Authorization": "Bearer tok"}
+        downloader = BandDownloader(auth)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"value": [{"Id": "uuid-0001"}]}
+
+        with patch("requests.get", return_value=mock_resp):
+            uuid = downloader._get_product_uuid("S2A_MSIL2A_SOMEPRODUCT.SAFE")
+
+        assert uuid == "uuid-0001"
+        # Debe estar cacheado: segunda llamada NO hace petición HTTP
+        with patch("requests.get", side_effect=AssertionError("no debería llamarse")):
+            uuid2 = downloader._get_product_uuid("S2A_MSIL2A_SOMEPRODUCT.SAFE")
+        assert uuid2 == "uuid-0001"
+
+    def test_get_product_uuid_not_found(self):
+        """OData sin resultados devuelve None sin lanzar excepción."""
+        auth       = MagicMock()
+        auth.headers.return_value = {}
+        downloader = BandDownloader(auth)
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"value": []}
+
+        with patch("requests.get", return_value=mock_resp):
+            uuid = downloader._get_product_uuid("NONEXISTENT.SAFE")
+
+        assert uuid is None
+
+    # ── _resolve_url (integración) ───────────────────────────────────────────
+
+    def test_resolve_url_converts_s3_to_odata_nodes(self):
+        """
+        _resolve_url convierte s3://eodata/… a una URL OData Nodes válida.
+        Verifica que NO se llama a eodata.dataspace.copernicus.eu (que da 403).
+        """
+        auth       = MagicMock()
+        auth.headers.return_value = {"Authorization": "Bearer tok"}
+        downloader = BandDownloader(auth)
+
+        s3_uri = (
+            "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
+            "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
+            "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
+            "IMG_DATA/R10m/T13QFB_20260528T172721_B02_10m.jp2"
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"value": [{"Id": "real-uuid-xyz"}]}
+
+        with patch("requests.get", return_value=mock_resp):
+            resolved = downloader._resolve_url(s3_uri)
+
+        # Resultado debe ser catalogue (implementa Nodes), no download ni eodata
+        assert "catalogue.dataspace.copernicus.eu/odata/v1/Products" in resolved
+        assert "download.dataspace.copernicus.eu" not in resolved
+        assert "eodata.dataspace.copernicus.eu" not in resolved
+        assert "s3://" not in resolved
+        assert "real-uuid-xyz" in resolved
+        assert resolved.endswith("/$value")
+
+    def test_resolve_url_passthrough_https(self):
+        """URLs HTTPS ya válidas pasan sin tocar (no llama a OData)."""
+        auth       = MagicMock()
+        downloader = BandDownloader(auth)
+        https_url  = "https://catalogue.dataspace.copernicus.eu/odata/v1/..."
+
+        with patch("requests.get", side_effect=AssertionError("no debería llamarse")):
+            result = downloader._resolve_url(https_url)
+
+        assert result == https_url
+
+    def test_download_file_uses_odata_nodes_not_eodata(self, tmp_path):
+        """
+        _download_file construye la URL en catalogue (implementa Nodes) y la descarga
+        con _CDSESession para que el redirect preserve el Bearer token.
+        Nunca debe intentar eodata.dataspace.copernicus.eu (requiere S3 sig) ni
+        download directamente (422 — no implementa Nodes traversal).
         """
         auth = MagicMock()
         auth.headers.return_value = {"Authorization": "Bearer tok"}
@@ -218,22 +372,29 @@ class TestBandDownloader:
             "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
             "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
             "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
-            "IMG_DATA/R20m/T13QFB_20260528T172721_B11_20m.jp2"
+            "IMG_DATA/R10m/T13QFB_20260528T172721_B02_10m.jp2"
         )
-        dest = tmp_path / "B11.jp2"
+        dest = tmp_path / "B02.jp2"
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.iter_content.return_value = [b"fake-data"]
+        uuid_resp = MagicMock()
+        uuid_resp.raise_for_status = MagicMock()
+        uuid_resp.json.return_value = {"value": [{"Id": "prod-uuid-42"}]}
 
-        with patch("requests.get", return_value=mock_resp) as mock_get:
-            result = downloader._download_file(s3_uri, dest)
+        file_resp = MagicMock()
+        file_resp.status_code = 200
+        file_resp.raise_for_status = MagicMock()
+        file_resp.iter_content.return_value = [b"fake-jp2-data"]
 
-        # Debe llamar requests.get con la URL HTTPS, no con el URI s3://
-        called_url = mock_get.call_args[0][0]
-        assert called_url.startswith("https://eodata.dataspace.copernicus.eu/")
-        assert "s3://" not in called_url
+        # UUID lookup → requests.get; descarga → _CDSESession.get
+        with patch("requests.get", return_value=uuid_resp):
+            with patch.object(downloader._session, "get", return_value=file_resp) as mock_session_get:
+                result = downloader._download_file(s3_uri, dest)
+
+        download_call_url = mock_session_get.call_args[0][0]
+        assert "catalogue.dataspace.copernicus.eu" in download_call_url
+        assert "eodata.dataspace.copernicus.eu" not in download_call_url
+        assert "download.dataspace.copernicus.eu" not in download_call_url
+        assert "s3://" not in download_call_url
         assert result is True
 
     def test_dry_run_does_not_write_files(self, tmp_path, sample_parcel, mock_product):

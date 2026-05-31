@@ -74,14 +74,6 @@ SPLIT_RATIOS  = (0.70, 0.15, 0.15)   # train / val / test
 class ParcelTimeSeries:
     """
     Contiene la serie de tiempo completa de una parcela.
-
-    Atributos
-    ---------
-    parcel_id : str
-    dates     : list de str "YYYY-MM-DD" ordenadas ascendente
-    doy       : día del año para cada fecha [1-365]
-    patches   : list de arrays (C, H, W) — uno por fecha, puede tener NaN
-    signals   : array (T, C) — media espacial por índice y fecha
     """
     parcel_id : str
     dates     : list[str]               = field(default_factory=list)
@@ -102,22 +94,10 @@ class ParcelTimeSeries:
 # 1. Lector de índices por parcela
 # ---------------------------------------------------------------------------
 class IndexReader:
-    """
-    Lee los TIFFs de índices de una parcela y construye la serie de tiempo.
-
-    Estructura esperada en disco (salida de spectral_indices.py):
-        {indices_dir}/{parcel_id}/{YYYY-MM-DD}/
-            NDVI.tif  NDWI.tif  NDMI.tif  NDRE.tif  EVI.tif  summary.json
-    """
-
     def __init__(self, indices_dir: Path):
         self._indices_dir = indices_dir
 
     def read_parcel(self, parcel_id: str) -> ParcelTimeSeries:
-        """
-        Lee todas las fechas disponibles para una parcela.
-        Si falta algún índice en una fecha, ese canal queda como NaN.
-        """
         parcel_dir = self._indices_dir / parcel_id
         if not parcel_dir.exists():
             logger.warning("Parcela %s no tiene directorio de índices", parcel_id)
@@ -156,19 +136,12 @@ class IndexReader:
         date_dir: Path,
         ref_shape: tuple[int, int] | None,
     ) -> tuple[np.ndarray | None, tuple[int, int] | None]:
-        """
-        Carga los TIFFs de todos los índices en una fecha y los apila.
-
-        Retorna:
-            (array (C, H, W) float32, (H, W)) o (None, None) si no hay datos.
-        """
         channels: list[np.ndarray] = []
         shape: tuple[int, int] | None = None
 
         for idx in INDICES:
             tif_path = date_dir / f"{idx}.tif"
             if not tif_path.exists():
-                # Canal ausente → rellenar con NaN si ya sabemos el shape
                 if shape is not None:
                     channels.append(np.full(shape, np.nan, dtype=np.float32))
                 elif ref_shape is not None:
@@ -183,23 +156,20 @@ class IndexReader:
 
             channels.append(arr)
 
-        # Si ningún índice tiene dato real → descartar la fecha
         if all(c is None for c in channels):
             return None, None
 
-        # Resolver los None con el shape ya conocido
         h, w   = shape or ref_shape or (0, 0)
         channels = [
             np.full((h, w), np.nan, dtype=np.float32) if c is None else c
             for c in channels
         ]
 
-        patch = np.stack(channels, axis=0)   # (C, H, W)
+        patch = np.stack(channels, axis=0)
         return patch, (h, w)
 
     @staticmethod
     def _date_to_doy(date_str: str) -> int:
-        """Convierte "YYYY-MM-DD" → día del año [1-365]."""
         return datetime.strptime(date_str, "%Y-%m-%d").timetuple().tm_yday
 
 
@@ -207,61 +177,37 @@ class IndexReader:
 # 2. Generador de señales (medias espaciales)
 # ---------------------------------------------------------------------------
 class SignalBuilder:
-    """
-    Colapsa el patch (C, H, W) a un vector (C,) tomando la media espacial
-    ignorando NaN. Resultado por parcela: array (T, C).
-    """
-
     @staticmethod
     def build(ts: ParcelTimeSeries) -> np.ndarray:
-        """Retorna array (T, C) con las medias por índice y fecha."""
         if not ts.patches:
             return np.empty((0, N_CHANNELS), dtype=np.float32)
 
         signals = []
         for patch in ts.patches:
-            # patch shape: (C, H, W) — media sobre H y W, ignorando NaN
             means = np.nanmean(patch.reshape(N_CHANNELS, -1), axis=1)
             signals.append(means)
 
-        return np.stack(signals, axis=0).astype(np.float32)   # (T, C)
+        return np.stack(signals, axis=0).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
 # 3. Normalización
 # ---------------------------------------------------------------------------
 class TSNormalizer:
-    """
-    Normaliza los valores de la serie de tiempo.
-
-    Todos los índices están en [-1, 1] por construcción, pero sus distribuciones
-    reales son más estrechas. Se ofrece:
-        - 'minmax' : lleva cada canal a [0, 1] usando stats del dataset
-        - 'zscore' : estandarización por canal (media 0, std 1)
-        - 'none'   : sin normalización (ya están en [-1, 1])
-
-    Las stats se calculan sobre el conjunto de entrenamiento y se guardan
-    en stats.json para aplicar las mismas transformaciones en val/test/inference.
-    """
-
     def __init__(self, mode: Literal["minmax", "zscore", "none"] = "minmax"):
         self.mode  = mode
-        self.stats : dict = {}   # {"NDVI": {"min": ..., "max": ...}, ...}
+        self.stats : dict = {}
 
     def fit(self, signals_list: list[np.ndarray]) -> "TSNormalizer":
-        """
-        Calcula stats sobre una lista de arrays (T, C).
-        Llama esto solo con datos de entrenamiento.
-        """
         if self.mode == "none":
             return self
-        all_data = np.concatenate(signals_list, axis=0)   # (N*T, C)
+        all_data = np.concatenate(signals_list, axis=0)
         for i, idx_name in enumerate(INDICES):
             col = all_data[:, i]
             col = col[~np.isnan(col)]
             if self.mode == "minmax":
                 self.stats[idx_name] = {
-                    "min": float(np.percentile(col, 1)),   # percentile robusto
+                    "min": float(np.percentile(col, 1)),
                     "max": float(np.percentile(col, 99)),
                 }
             elif self.mode == "zscore":
@@ -272,10 +218,6 @@ class TSNormalizer:
         return self
 
     def transform(self, data: np.ndarray) -> np.ndarray:
-        """
-        Aplica la normalización a un array (T, C) o (T, C, H, W).
-        Los NaN se preservan.
-        """
         if self.mode == "none" or not self.stats:
             return data
         out = data.copy()
@@ -315,19 +257,11 @@ class TSNormalizer:
 # 4. Escritor de datasets
 # ---------------------------------------------------------------------------
 class DatasetWriter:
-    """
-    Guarda los arrays de series de tiempo como archivos .npz comprimidos.
-
-    Formato .npz elegido sobre .pt (PyTorch) para no depender del framework
-    en esta etapa; es trivial cargarlo en PyTorch con torch.from_numpy().
-    """
-
     def __init__(self, output_dir: Path):
         self._patches_dir = output_dir / "patches"
         self._signals_dir = output_dir / "signals"
 
     def write_patch(self, ts: ParcelTimeSeries) -> Path:
-        """Guarda (T, C, H, W) + dates + doy en .npz."""
         self._patches_dir.mkdir(parents=True, exist_ok=True)
         out = self._patches_dir / f"{ts.parcel_id}.npz"
         np.savez_compressed(
@@ -339,7 +273,6 @@ class DatasetWriter:
         return out
 
     def write_signal(self, ts: ParcelTimeSeries, signals: np.ndarray) -> Path:
-        """Guarda (T, C) + dates + doy en .npz."""
         self._signals_dir.mkdir(parents=True, exist_ok=True)
         out = self._signals_dir / f"{ts.parcel_id}.npz"
         np.savez_compressed(
@@ -355,10 +288,6 @@ class DatasetWriter:
 # 5. Manifest + Split
 # ---------------------------------------------------------------------------
 class ManifestBuilder:
-    """
-    Genera el CSV de manifiesto del dataset y el JSON de split train/val/test.
-    """
-
     def __init__(self, output_dir: Path):
         self._output_dir = output_dir
 
@@ -368,7 +297,6 @@ class ManifestBuilder:
         parcel_ids: list[str],
         split: bool = False,
     ) -> None:
-        # Manifest CSV
         manifest_path = self._output_dir / "manifest.csv"
         fieldnames    = [
             "parcel_id", "n_dates", "date_min", "date_max",
@@ -381,12 +309,10 @@ class ManifestBuilder:
             writer.writerows(records)
         logger.info("Manifest guardado: %s (%d parcelas)", manifest_path, len(records))
 
-        # Train/Val/Test split
         if split and parcel_ids:
             self._write_split(parcel_ids)
 
     def _write_split(self, parcel_ids: list[str]) -> None:
-        """Split reproducible con seed fijo para consistencia entre ejecuciones."""
         rng    = np.random.default_rng(seed=42)
         ids    = np.array(parcel_ids)
         rng.shuffle(ids)
@@ -410,18 +336,6 @@ class ManifestBuilder:
 # 6. Orquestador principal
 # ---------------------------------------------------------------------------
 class TimeSeriesBuilder:
-    """
-    Orquesta la construcción del dataset de series de tiempo.
-
-    Flujo:
-        Para cada parcela:
-            1. IndexReader    → lee TIFFs, construye ParcelTimeSeries
-            2. SignalBuilder  → colapsa patches a medias (T, C)
-            3. TSNormalizer   → normaliza (fit solo sobre train)
-            4. DatasetWriter  → guarda .npz
-            5. ManifestBuilder→ genera manifest.csv y split.json
-    """
-
     def __init__(
         self,
         indices_dir : Path,
@@ -445,7 +359,6 @@ class TimeSeriesBuilder:
         parcel_ids  : list[str] | None = None,
         split       : bool = False,
     ) -> None:
-        # Cargar parcelas del CSV
         df = pd.read_csv(parcels_csv)
         if parcel_ids:
             df = df[df["parcel_id"].isin(parcel_ids)]
@@ -472,7 +385,6 @@ class TimeSeriesBuilder:
 
         if not all_ts:
             logger.error("Ninguna parcela superó el mínimo de %d fechas.", MIN_DATES)
-            logger.error("¿Ya corriste make download-sentinel2 && make compute-indices?")
             sys.exit(1)
 
         # ── Paso 2: construir signals ───────────────────────────
@@ -480,9 +392,7 @@ class TimeSeriesBuilder:
         for pid, ts in all_ts.items():
             all_signals[pid] = self._sig_builder.build(ts)
 
-        # ── Paso 3: fit normalizer sobre TODOS (sin split aún) ─
-        # Nota: en producción haría fit solo sobre train; aquí es aceptable
-        # porque solo usamos percentiles robustos del conjunto completo.
+        # ── Paso 3: fit normalizer sobre TODOS ──────────────────
         if self._normalizer.mode != "none":
             self._normalizer.fit(list(all_signals.values()))
             if not self._dry_run:
@@ -494,7 +404,19 @@ class TimeSeriesBuilder:
         valid_ids: list[str] = []
 
         for pid, ts in all_ts.items():
+            
+            # NORMALIZACIÓN CORREGIDA 
+            # 1. Normalizar las señales (T, C)
             signals_norm = self._normalizer.transform(all_signals[pid])
+            
+            # 2. Normalizar los parches (T, C, H, W) si el modo lo requiere
+            if self._mode in ("patch", "both") and ts.patches:
+                # Convertimos la lista de parches a un array 4D para normalizar
+                patches_array = np.stack(ts.patches, axis=0)
+                patches_norm = self._normalizer.transform(patches_array)
+                # Reasignamos a la dataclass como lista para mantener compatibilidad
+                ts.patches = list(patches_norm)
+
             has_patch = has_signal = False
 
             if not self._dry_run:
@@ -506,7 +428,7 @@ class TimeSeriesBuilder:
                     has_signal = True
 
             # Stats para el manifest (desde signals sin normalizar)
-            raw_sig = all_signals[pid]       # (T, C)
+            raw_sig = all_signals[pid]       
             col_means = {
                 f"mean_{idx.lower()}": (
                     float(np.nanmean(raw_sig[:, i]))

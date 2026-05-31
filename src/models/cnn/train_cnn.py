@@ -268,6 +268,8 @@ def train(cfg: dict) -> None:
                 shuffle    = (split == "train"),
                 num_workers= 0,
                 pin_memory = torch.cuda.is_available(),
+                # Solo tira el último batch si estamos en train Y el dataset es mayor al batch_size
+                drop_last  = (split == "train" and len(ds) > cfg["batch_size"]), 
             )
             for split, ds in datasets.items()
         }

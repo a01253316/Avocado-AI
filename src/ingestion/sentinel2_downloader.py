@@ -2,27 +2,23 @@
 sentinel2_downloader.py
 =======================
 Descarga imágenes Sentinel-2 por parcela y rango de fechas usando la API
-de Copernicus Data Space Ecosystem (CDSE) de ESA — gratuita y oficial.
+de Copernicus Data Space Ecosystem (CDSE) — gratuita y oficial.
 
-Arquitectura:
-    CDSEAuth            → obtiene/renueva el token OAuth2
-    STACSearcher        → busca productos via STAC API por bbox + fecha + nubosidad
-    BandDownloader      → descarga las bandas .tif específicas de cada producto
-    AlphaEarthClient    → stub para futura integración con Alpha Earth
+Arquitectura actualizada (Process API / Sentinel Hub - FLOAT32):
+    CDSEAuth                → obtiene/renueva el token OAuth2
+    STACSearcher            → busca productos via STAC API por bbox + fecha + nubosidad
+    ProcessAPIDownloader    → solicita y descarga un GeoTIFF multibanda recortado en FLOAT32
+    AlphaEarthClient        → stub para futura integración con Alpha Earth
     SentinelDownloadManager → orquestador: lee el CSV, coordina todo, actualiza estados
 
 Uso:
     # Descarga todas las parcelas del CSV
-    python sentinel2_downloader.py --config configs/sentinel2.yaml \\
+    python sentinel2_downloader.py --config configs/sentinel2.yaml \
                                    --parcels data/raw/parcels/parcelas.csv
 
     # Solo las primeras 5 parcelas (para pruebas)
-    python sentinel2_downloader.py --parcels data/raw/parcels/parcelas.csv \\
+    python sentinel2_downloader.py --parcels data/raw/parcels/parcelas.csv \
                                    --parcel-ids H1 H2 H3 H4 H5
-
-    # Dry-run: muestra qué descargaría sin hacerlo
-    python sentinel2_downloader.py --parcels data/raw/parcels/parcelas.csv \\
-                                   --dry-run
 
 Credenciales necesarias en .env:
     CDSE_USER=tu_email@ejemplo.com
@@ -38,7 +34,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Generator
 
@@ -68,30 +64,9 @@ CDSE_TOKEN_URL = (
     "/auth/realms/CDSE/protocol/openid-connect/token"
 )
 CDSE_STAC_URL  = "https://stac.dataspace.copernicus.eu/v1"
-CDSE_ODATA_URL = "https://zipper.dataspace.copernicus.eu/odata/v1"
 
-# Tipo de producto: S2MSI2A = Level-2A (reflectancia de superficie, ya corregido)
-# Es lo que queremos para índices de vegetación
+# Tipo de colección
 S2_COLLECTION  = "sentinel-2-l2a"
-S2_PRODUCT_TYPE = "S2MSI2A"
-
-# Bandas que descargamos (solo las que necesitamos para los índices)
-TARGET_BANDS = ["B02", "B03", "B04", "B05", "B08", "B11"]
-
-# Resolución preferida por banda según los assets reales de CDSE.
-# Las bandas a 20m (B05, B11) serán resampleadas a 10m en spectral_indices.py.
-# Los assets se llaman p.ej. "B08_10m", "B05_20m" — nunca solo "B08".
-BAND_PREFERRED_RES = {
-    "B02": "10m",  # Blue  — disponible a 10m
-    "B03": "10m",  # Green — disponible a 10m
-    "B04": "10m",  # Red   — disponible a 10m
-    "B05": "20m",  # Red Edge — solo 20m nativo
-    "B08": "10m",  # NIR   — disponible a 10m
-    "B11": "20m",  # SWIR1 — solo 20m nativo
-}
-
-# Extensión de los archivos descargados (CDSE entrega JP2, no TIFF)
-BAND_EXT = ".jp2"
 
 # Reintentos y tiempos de espera
 MAX_RETRIES = 4
@@ -140,11 +115,8 @@ class Parcel:
 class CDSEAuth:
     """
     Gestiona el token de acceso OAuth2 para CDSE.
-
-    El token dura 10 minutos. Esta clase lo renueva automáticamente
-    antes de que expire, de forma transparente para el resto del código.
+    Renueva el token automáticamente antes de que expire.
     """
-
     def __init__(self, username: str, password: str):
         self._user     = username
         self._password = password
@@ -186,18 +158,7 @@ class CDSEAuth:
 # 2. Búsqueda STAC
 # ---------------------------------------------------------------------------
 class STACSearcher:
-    """
-    Busca productos Sentinel-2 disponibles en CDSE via STAC API.
-
-    Correcciones respecto a la versión anterior:
-        1. Usa 'filter' + 'filter-lang: cql2-json' en lugar de 'query'
-           (la API de CDSE no soporta el campo 'query' de OGC STAC API)
-        2. Paginación via 'next' link en lugar de page=N
-           (CDSE usa token-based pagination, no page numbers)
-        3. Eliminado 'sortby' que también causaba errores silenciosos
-        4. Logging del cuerpo de error para diagnóstico rápido
-    """
-
+    """Busca productos Sentinel-2 disponibles en CDSE via STAC API."""
     def __init__(self, auth: CDSEAuth):
         self._auth = auth
 
@@ -207,17 +168,8 @@ class STACSearcher:
         config: DownloadConfig,
         page_size: int = 100,
     ) -> Generator[dict, None, None]:
-        """
-        Genera los productos disponibles para una parcela (paginado).
-
-        Paginación: CDSE devuelve un link rel='next' con token en la URL.
-        Se sigue ese link hasta que no haya más resultados.
-        """
+        
         endpoint = f"{CDSE_STAC_URL}/search"
-
-        # ── Filtro CQL2-JSON (formato correcto para CDSE) ──────────────────
-        # CDSE no soporta el campo 'query' de OGC STAC API.
-        # En su lugar usa 'filter' con 'filter-lang: cql2-json'.
         payload = {
             "collections": [S2_COLLECTION],
             "bbox":        parcel.bbox,
@@ -230,18 +182,13 @@ class STACSearcher:
             },
         }
 
-        # ── Paginación via next link ────────────────────────────────────────
-        # CDSE no soporta page=N. Devuelve un link rel='next' con un token
-        # en la query string. Se hace GET (no POST) a ese link.
         next_url: str | None = None
         page_num = 1
 
         while True:
             if next_url:
-                # Páginas siguientes: GET al next link (ya incluye el token)
                 data = self._get_with_retry(next_url)
             else:
-                # Primera página: POST con el payload completo
                 data = self._post_with_retry(endpoint, payload)
 
             if not data:
@@ -258,19 +205,15 @@ class STACSearcher:
             for feature in features:
                 yield feature
 
-            # Buscar el link 'next' para la siguiente página
             links    = data.get("links", [])
             next_obj = next((l for l in links if l.get("rel") == "next"), None)
             if next_obj:
                 next_url = next_obj.get("href")
                 page_num += 1
             else:
-                break   # No hay más páginas
-
-    # ── Helpers HTTP ─────────────────────────────────────────────────────────
+                break
 
     def _post_with_retry(self, url: str, payload: dict) -> dict:
-        """POST con reintentos exponenciales y logging del cuerpo de error."""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 resp = requests.post(
@@ -286,26 +229,17 @@ class STACSearcher:
                     logger.warning("Rate limit CDSE, esperando %ds...", wait)
                     time.sleep(wait)
                     continue
-                # Logear el cuerpo del error para diagnóstico
-                logger.error(
-                    "STAC POST HTTP %d: %s",
-                    resp.status_code, resp.text[:400],
-                )
+                logger.error("STAC POST HTTP %d: %s", resp.status_code, resp.text[:400])
                 return {}
             except requests.RequestException as e:
                 if attempt == MAX_RETRIES:
                     logger.error("STAC POST falló definitivamente: %s", e)
                     return {}
                 wait = RETRY_BACKOFF ** attempt
-                logger.warning(
-                    "Error en búsqueda (intento %d/%d): %s. Reintentando en %ds",
-                    attempt, MAX_RETRIES, e, wait,
-                )
                 time.sleep(wait)
         return {}
 
     def _get_with_retry(self, url: str) -> dict:
-        """GET con reintentos para paginación via next link."""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 resp = requests.get(
@@ -320,7 +254,7 @@ class STACSearcher:
                     continue
                 logger.error("STAC GET HTTP %d: %s", resp.status_code, resp.text[:300])
                 return {}
-            except requests.RequestException as e:
+            except requests.RequestException:
                 if attempt == MAX_RETRIES:
                     return {}
                 time.sleep(RETRY_BACKOFF ** attempt)
@@ -328,28 +262,17 @@ class STACSearcher:
 
 
 # ---------------------------------------------------------------------------
-# 3. Descarga de bandas
+# 3. Descarga de bandas (Process API / Sentinel Hub - Arreglado FLOAT32)
 # ---------------------------------------------------------------------------
-class BandDownloader:
+class ProcessAPIDownloader:
     """
-    Descarga bandas .tif individuales de un producto Sentinel-2.
-
-    Estructura de salida:
-        data/raw/sentinel2/
-        └── {parcel_id}/
-            └── {YYYY-MM-DD}/
-                ├── B02.tif
-                ├── B03.tif
-                ├── B04.tif
-                ├── B05.tif
-                ├── B08.tif
-                ├── B11.tif
-                └── metadata.json
+    Descarga un GeoTIFF recortado y multibanda usando la Process API de CDSE.
+    Optimizado en precisión FLOAT32 para evitar truncamiento a cero (TIFs negros).
     """
-
     def __init__(self, auth: CDSEAuth, dry_run: bool = False):
-        self._auth    = auth
+        self._auth = auth
         self._dry_run = dry_run
+        self._endpoint = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
     def download_product(
         self,
@@ -357,154 +280,129 @@ class BandDownloader:
         parcel: Parcel,
         bands: list[str],
     ) -> Path | None:
-        """
-        Descarga las bandas de un producto para una parcela.
-
-        Retorna la ruta del directorio descargado, o None si ya existía
-        (skip inteligente: no re-descarga lo que ya está en disco).
-        """
-        # Extraer fecha del producto
+        
         date_str = self._parse_date(product)
         out_dir  = parcel.output_dir / date_str
+        out_file = out_dir / "parcel_multiband.tif"
 
-        if self._already_downloaded(out_dir, bands):
-            logger.debug("  ↳ %s/%s ya descargado, skip", parcel.parcel_id, date_str)
+        if out_file.exists():
+            logger.debug("  ↳ %s/%s ya descargado (TIFF), skip", parcel.parcel_id, date_str)
             return None
 
         if self._dry_run:
-            logger.info("  [DRY-RUN] Descargaría %s/%s", parcel.parcel_id, date_str)
+            logger.info("  [DRY-RUN] Solicitaría TIFF recortado para %s/%s", parcel.parcel_id, date_str)
             return None
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Guardar metadata del producto
+        # Guardar metadata del STAC
         (out_dir / "metadata.json").write_text(
             json.dumps(product.get("properties", {}), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-        # Descargar cada banda
-        assets      = product.get("assets", {})
-        downloaded  = 0
-        failed: list[str] = []
+        # Usamos FLOAT32 para que los decimales de reflectancia (0.0 a 1.0) no se trunquen a 0
+        bands_json = json.dumps(bands)
+        evalscript = f"""//VERSION=3
+        function setup() {{
+            return {{
+                input: {bands_json},
+                output: {{ bands: {len(bands)}, sampleType: "FLOAT32" }}
+            }};
+        }}
+        function evaluatePixel(sample) {{
+            return [{", ".join([f"sample.{b}" for b in bands])}];
+        }}
+        """
 
-        for band in bands:
-            asset = self._find_band_asset(assets, band)
-            if asset is None:
-                logger.warning("  ↳ Banda %s no encontrada en producto %s", band, product.get("id"))
-                failed.append(band)
-                continue
-            out_file = out_dir / f"{band}{BAND_EXT}"
-            success  = self._download_file(asset["href"], out_file)
-            if success:
-                downloaded += 1
-            else:
-                failed.append(band)
+        payload = {
+            "input": {
+                "bounds": {
+                    "bbox": parcel.bbox,
+                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}
+                },
+                "data": [
+                    {
+                        "type": "sentinel-2-l2a",
+                        "dataFilter": {
+                            "timeRange": {
+                                "from": f"{date_str}T00:00:00Z",
+                                "to": f"{date_str}T23:59:59Z"
+                            }
+                        }
+                    }
+                ]
+            },
+            "output": {
+                "resx": 0.00009,
+                "resy": 0.00009,
+                "responses": [
+                    {
+                        "identifier": "default",
+                        "format": {"type": "image/tiff"}
+                    }
+                ]
+            },
+            "evalscript": evalscript
+        }
 
-        if failed:
-            logger.warning("  ↳ %s/%s: fallaron bandas %s", parcel.parcel_id, date_str, failed)
-        if downloaded > 0:
-            logger.info("  ✓ %s/%s (%d/%d bandas)", parcel.parcel_id, date_str, downloaded, len(bands))
-
-        return out_dir if downloaded > 0 else None
-
-    # ── helpers ──────────────────────────────────────────────
+        success = self._download_tiff(payload, out_file)
+        
+        if success:
+            logger.info("  ✓ %s/%s (TIFF Multibanda guardado)", parcel.parcel_id, date_str)
+            return out_dir
+        else:
+            logger.warning("  ↳ %s/%s: falló la generación del TIFF", parcel.parcel_id, date_str)
+            return None
 
     def _parse_date(self, product: dict) -> str:
-        """Extrae YYYY-MM-DD del campo datetime del producto."""
         raw = product.get("properties", {}).get("datetime", "")
         try:
             return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime("%Y-%m-%d")
         except ValueError:
             return raw[:10] if len(raw) >= 10 else "unknown-date"
 
-    def _find_band_asset(self, assets: dict, band: str) -> dict | None:
-        """
-        Busca el asset correcto para una banda en los assets del producto CDSE.
-
-        CDSE nombra los assets con resolución explícita: "B08_10m", "B05_20m".
-        Nunca existen como "B08" solo.
-
-        Estrategia:
-            1. Preferencia: {BAND}_{RES_PREFERIDA}m  (ej. B08_10m)
-            2. Fallback:    cualquier key que empiece por {BAND}_
-            3. Último recurso: URL del href contiene el nombre de la banda
-        """
-        band_up  = band.upper()
-        pref_res = BAND_PREFERRED_RES.get(band_up, "10m")
-
-        # 1. Key exacto con resolución preferida (ej. "B08_10m")
-        pref_key = f"{band_up}_{pref_res}"
-        if pref_key in assets:
-            return assets[pref_key]
-
-        # 2. Cualquier resolución de la misma banda (ej. B05_20m, B05_60m)
-        for key, val in assets.items():
-            if key.upper().startswith(f"{band_up}_"):
-                return val
-
-        # 3. Match exacto sin resolución (poco probable en CDSE pero por si acaso)
-        if band_up in assets:
-            return assets[band_up]
-
-        # 4. Buscar en la URL del href
-        for key, val in assets.items():
-            href = val.get("href", "").upper()
-            if f"_{band_up}_" in href or f"_{band_up}." in href:
-                return val
-
-        return None
-
-    def _already_downloaded(self, out_dir: Path, bands: list[str]) -> bool:
-        """Retorna True si todas las bandas ya existen en disco."""
-        if not out_dir.exists():
-            return False
-        return all((out_dir / f"{b}{BAND_EXT}").exists() for b in bands)
-
-    @staticmethod
-    def _normalize_url(url: str) -> str:
-        """
-        Convierte S3 URIs de CDSE a URLs HTTPS descargables con Bearer token.
-
-        El catálogo STAC de CDSE a veces devuelve asset hrefs como:
-            s3://eodata/Sentinel-2/MSI/L2A/.../B11_20m.jp2
-
-        El bucket 'eodata' está expuesto vía HTTPS en:
-            https://eodata.dataspace.copernicus.eu/Sentinel-2/MSI/L2A/.../B11_20m.jp2
-
-        Este endpoint acepta el mismo Bearer token OAuth2 que el resto de la API.
-        requests no tiene adaptador para el esquema s3://, de ahí el error:
-            "No connection adapters were found for 's3://...'"
-        """
-        if url.startswith("s3://eodata/"):
-            return "https://eodata.dataspace.copernicus.eu/" + url[len("s3://eodata/"):]
-        return url
-
-    def _download_file(self, url: str, dest: Path) -> bool:
-        """Descarga un archivo con streaming y reintentos."""
-        url = self._normalize_url(url)
+    def _download_tiff(self, payload: dict, dest: Path) -> bool:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                resp = requests.get(
-                    url,
-                    headers=self._auth.headers(),
-                    stream=True,
-                    timeout=120,
+                resp = requests.post(
+                    self._endpoint,
+                    headers={
+                        "Authorization": f"Bearer {self._auth.token()}",
+                        "Content-Type": "application/json",
+                        "Accept": "image/tiff"
+                    },
+                    json=payload,
+                    timeout=120
                 )
+                
+                if resp.status_code in [429, 500, 502, 503, 504]:
+                    wait = RETRY_BACKOFF ** attempt
+                    logger.warning("Process API ocupada (HTTP %d). Reintento en %ds", resp.status_code, wait)
+                    time.sleep(wait)
+                    continue
+                    
                 resp.raise_for_status()
+                
+                # Validación crítica: Verificar que no sea un JSON de error disfrazado de TIFF
+                content_type = resp.headers.get("Content-Type", "")
+                if "image/tiff" not in content_type:
+                    logger.error("    Error: El servidor no devolvió un TIFF válido. Devolvió: %s. Body: %s", content_type, resp.text[:200])
+                    return False
+
                 with dest.open("wb") as f:
-                    for chunk in resp.iter_content(chunk_size=1024 * 256):
-                        f.write(chunk)
+                    f.write(resp.content)
                 return True
+                
             except requests.RequestException as e:
                 if attempt == MAX_RETRIES:
-                    logger.error("    Fallo definitivo descargando %s: %s", dest.name, e)
+                    logger.error("    Fallo definitivo en Process API: %s", e)
                     if dest.exists():
-                        dest.unlink()  # Limpia archivo parcial
+                        dest.unlink()
                     return False
                 wait = RETRY_BACKOFF ** attempt
-                logger.debug("    Reintento %d/%d para %s en %ds", attempt, MAX_RETRIES, dest.name, wait)
                 time.sleep(wait)
+                
         return False
 
 
@@ -512,28 +410,15 @@ class BandDownloader:
 # 4. Alpha Earth (stub — listo para integrar)
 # ---------------------------------------------------------------------------
 class AlphaEarthClient:
-    """
-    Cliente para la API de Alpha Earth.
-
-    Por ahora es un stub. Cuando tengas las credenciales y la documentación
-    de la API, implementa `search()` y `download()` siguiendo el mismo
-    patrón que CDSEDownloader.
-
-    Alpha Earth puede usarse como fuente alternativa o complementaria
-    para imágenes de alta resolución o datos de cobertura de suelo.
-    """
-
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._base_url = os.getenv("ALPHA_EARTH_BASE_URL", "https://api.alphaearth.ai/v1")
 
     def search(self, parcel: Parcel, config: DownloadConfig) -> list[dict]:
-        """TODO: implementar búsqueda de imágenes en Alpha Earth."""
         logger.warning("AlphaEarthClient.search() aún no implementado.")
         return []
 
     def download(self, product: dict, parcel: Parcel, bands: list[str]) -> Path | None:
-        """TODO: implementar descarga de bandas desde Alpha Earth."""
         logger.warning("AlphaEarthClient.download() aún no implementado.")
         return None
 
@@ -545,17 +430,6 @@ class AlphaEarthClient:
 # 5. Orquestador principal
 # ---------------------------------------------------------------------------
 class SentinelDownloadManager:
-    """
-    Orquesta la descarga de imágenes Sentinel-2 para todas las parcelas.
-
-    Flujo por parcela:
-        1. Leer bbox y estado del CSV
-        2. Buscar productos disponibles via STAC
-        3. Descargar las bandas de cada producto
-        4. Actualizar la columna `download_ready` en el CSV
-        5. Registrar un resumen de descargas en un JSON de auditoría
-    """
-
     def __init__(
         self,
         config: DownloadConfig,
@@ -564,7 +438,7 @@ class SentinelDownloadManager:
     ):
         self._config     = config
         self._searcher   = STACSearcher(auth)
-        self._downloader = BandDownloader(auth, dry_run=dry_run)
+        self._downloader = ProcessAPIDownloader(auth, dry_run=dry_run)
         self._dry_run    = dry_run
 
     def run(
@@ -572,16 +446,8 @@ class SentinelDownloadManager:
         parcels_csv: Path,
         parcel_ids: list[str] | None = None,
     ) -> None:
-        """
-        Ejecuta el pipeline de descarga para las parcelas del CSV.
-
-        Args:
-            parcels_csv: Ruta al CSV generado por kml_to_csv.py
-            parcel_ids:  Lista de IDs a procesar. Si es None, procesa todas.
-        """
         df = pd.read_csv(parcels_csv)
 
-        # Filtrar parcelas si se especificaron IDs concretos
         if parcel_ids:
             df = df[df["parcel_id"].isin(parcel_ids)].copy()
             logger.info("Filtrando a %d parcelas: %s", len(df), parcel_ids)
@@ -629,7 +495,6 @@ class SentinelDownloadManager:
                 products_found, products_ok
             )
 
-            # Actualizar flag en el DataFrame
             if products_ok > 0 and not self._dry_run:
                 df.at[idx, "download_ready"] = True
                 ok_count += 1
@@ -641,12 +506,10 @@ class SentinelDownloadManager:
                 "timestamp":        datetime.utcnow().isoformat(),
             })
 
-        # Persistir el CSV actualizado
         if not self._dry_run:
             df.to_csv(parcels_csv, index=False)
             logger.info("CSV actualizado: %s", parcels_csv)
 
-        # Guardar auditoría
         audit_path = self._config.output_dir / "download_audit.json"
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         if not self._dry_run:
@@ -664,7 +527,6 @@ class SentinelDownloadManager:
 # Helpers de configuración
 # ---------------------------------------------------------------------------
 def load_config(config_path: Path) -> DownloadConfig:
-    """Lee el YAML de configuración y retorna un DownloadConfig."""
     with config_path.open(encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
@@ -679,7 +541,6 @@ def load_config(config_path: Path) -> DownloadConfig:
 
 
 def require_env(name: str) -> str:
-    """Lee una variable de entorno, lanza error claro si no existe."""
     val = os.getenv(name)
     if not val:
         logger.error(
@@ -696,7 +557,7 @@ def require_env(name: str) -> str:
 # ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Descarga imágenes Sentinel-2 para parcelas de aguacate",
+        description="Descarga imágenes Sentinel-2 para parcelas (Process API - FLOAT32)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -745,7 +606,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Validaciones básicas
     if not args.parcels.exists():
         logger.error("CSV de parcelas no encontrado: %s", args.parcels)
         sys.exit(1)
@@ -753,10 +613,8 @@ def main() -> None:
         logger.error("Config no encontrada: %s", args.config)
         sys.exit(1)
 
-    # Cargar configuración
     config = load_config(args.config)
 
-    # Sobreescrituras desde CLI
     if args.start:
         config.start_date = args.start
     if args.end:
@@ -764,7 +622,6 @@ def main() -> None:
     if args.max_clouds is not None:
         config.max_cloud_cover = args.max_clouds
 
-    # Inicializar cliente según fuente
     if args.source == "cdse":
         auth    = CDSEAuth(require_env("CDSE_USER"), require_env("CDSE_PASSWORD"))
         manager = SentinelDownloadManager(config, auth, dry_run=args.dry_run)

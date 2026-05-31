@@ -68,8 +68,7 @@ build-dataset:
 # ── Entrenamiento ──────────────────────────────────────────
 train-cnn:
 	@echo "🧠 Entrenando CNN baseline..."
-	$(PYTHON) src/models/cnn/train_cnn.py \
-		--config configs/sentinel2.yaml
+	$(PYTHON) src/models/cnn/train_cnn.py
 
 train-vit:
 	@echo "🤖 Entrenando ViT for SITS..."
