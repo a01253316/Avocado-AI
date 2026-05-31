@@ -3,14 +3,13 @@
 # ============================================================
 PYTHON      := python
 PIP         := pip
-CONDA_ENV   := avocado-mlops
 KML_INPUT   := data/raw/parcels/aguacates_jalisco_5_5_26.kml
 PARCELS_CSV := data/raw/parcels/parcelas.csv
 START_DATE  := 2020-01-01
 END_DATE    := $(shell date +%Y-%m-%d)
 BUFFER_M    := 250
 
-.PHONY: help setup conda-setup extract-parcels download-sentinel2 \
+.PHONY: help setup extract-parcels download-sentinel2 \
         compute-indices build-dataset train-cnn train-vit \
         test lint clean
 
@@ -19,8 +18,7 @@ help:
 	@echo ""
 	@echo "🥑  Avocado Stress MLOps — comandos disponibles"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  make conda-setup        Crea entorno conda con GDAL (recomendado en macOS)"
-	@echo "  make setup              Instala deps vía pip (requiere GDAL en el sistema)"
+	@echo "  make setup              Instala dependencias"
 	@echo "  make extract-parcels    KML → CSV (100 parcelas)"
 	@echo "  make download-sentinel2 Descarga imágenes Sentinel-2"
 	@echo "  make compute-indices    Calcula NDVI/NDWI/NDMI/NDRE/EVI"
@@ -33,17 +31,6 @@ help:
 	@echo ""
 
 # ── Setup ──────────────────────────────────────────────────
-conda-setup:
-	@echo "🔧 Creando entorno conda '$(CONDA_ENV)' con GDAL via conda-forge..."
-	conda create -n $(CONDA_ENV) python=3.11 -y
-	conda run -n $(CONDA_ENV) conda install -c conda-forge \
-		gdal fiona rasterio geopandas shapely pyproj -y
-	conda run -n $(CONDA_ENV) pip install -r requirements.txt \
-		--ignore-requires-python
-	@echo ""
-	@echo "✅ Entorno listo. Actívalo con:"
-	@echo "   conda activate $(CONDA_ENV)"
-
 setup:
 	$(PIP) install -r requirements.txt
 	@echo "✅ Entorno listo"
@@ -62,8 +49,7 @@ download-sentinel2: $(PARCELS_CSV)
 	$(PYTHON) src/ingestion/sentinel2_downloader.py \
 		--parcels $(PARCELS_CSV) \
 		--start $(START_DATE) \
-		--end $(END_DATE) \
-		--output data/raw/sentinel2/
+		--end $(END_DATE)
 
 # ── Procesamiento ──────────────────────────────────────────
 compute-indices:

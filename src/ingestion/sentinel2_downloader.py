@@ -67,16 +67,31 @@ CDSE_TOKEN_URL = (
     "https://identity.dataspace.copernicus.eu"
     "/auth/realms/CDSE/protocol/openid-connect/token"
 )
-CDSE_STAC_URL  = "https://catalogue.dataspace.copernicus.eu/stac"
+CDSE_STAC_URL  = "https://stac.dataspace.copernicus.eu/v1"
 CDSE_ODATA_URL = "https://zipper.dataspace.copernicus.eu/odata/v1"
 
 # Tipo de producto: S2MSI2A = Level-2A (reflectancia de superficie, ya corregido)
 # Es lo que queremos para índices de vegetación
-S2_COLLECTION  = "SENTINEL-2"
+S2_COLLECTION  = "sentinel-2-l2a"
 S2_PRODUCT_TYPE = "S2MSI2A"
 
 # Bandas que descargamos (solo las que necesitamos para los índices)
 TARGET_BANDS = ["B02", "B03", "B04", "B05", "B08", "B11"]
+
+# Resolución preferida por banda según los assets reales de CDSE.
+# Las bandas a 20m (B05, B11) serán resampleadas a 10m en spectral_indices.py.
+# Los assets se llaman p.ej. "B08_10m", "B05_20m" — nunca solo "B08".
+BAND_PREFERRED_RES = {
+    "B02": "10m",  # Blue  — disponible a 10m
+    "B03": "10m",  # Green — disponible a 10m
+    "B04": "10m",  # Red   — disponible a 10m
+    "B05": "20m",  # Red Edge — solo 20m nativo
+    "B08": "10m",  # NIR   — disponible a 10m
+    "B11": "20m",  # SWIR1 — solo 20m nativo
+}
+
+# Extensión de los archivos descargados (CDSE entrega JP2, no TIFF)
+BAND_EXT = ".jp2"
 
 # Reintentos y tiempos de espera
 MAX_RETRIES = 4
@@ -174,11 +189,13 @@ class STACSearcher:
     """
     Busca productos Sentinel-2 disponibles en CDSE via STAC API.
 
-    Filtra por:
-        - bbox de la parcela
-        - rango de fechas
-        - porcentaje máximo de nubosidad
-        - tipo de producto (S2MSI2A = Level-2A)
+    Correcciones respecto a la versión anterior:
+        1. Usa 'filter' + 'filter-lang: cql2-json' en lugar de 'query'
+           (la API de CDSE no soporta el campo 'query' de OGC STAC API)
+        2. Paginación via 'next' link en lugar de page=N
+           (CDSE usa token-based pagination, no page numbers)
+        3. Eliminado 'sortby' que también causaba errores silenciosos
+        4. Logging del cuerpo de error para diagnóstico rápido
     """
 
     def __init__(self, auth: CDSEAuth):
@@ -193,49 +210,74 @@ class STACSearcher:
         """
         Genera los productos disponibles para una parcela (paginado).
 
-        Cada producto es un dict GeoJSON Feature con los campos:
-            id, geometry, properties (datetime, cloudCover, etc.), assets
+        Paginación: CDSE devuelve un link rel='next' con token en la URL.
+        Se sigue ese link hasta que no haya más resultados.
         """
         endpoint = f"{CDSE_STAC_URL}/search"
-        payload  = {
+
+        # ── Filtro CQL2-JSON (formato correcto para CDSE) ──────────────────
+        # CDSE no soporta el campo 'query' de OGC STAC API.
+        # En su lugar usa 'filter' con 'filter-lang: cql2-json'.
+        payload = {
             "collections": [S2_COLLECTION],
             "bbox":        parcel.bbox,
             "datetime":    f"{config.start_date}T00:00:00Z/{config.end_date}T23:59:59Z",
-            "query": {
-                "eo:cloud_cover": {"lte": config.max_cloud_cover},
-                "s2:product_type": {"eq": S2_PRODUCT_TYPE},
+            "limit":       page_size,
+            "filter-lang": "cql2-json",
+            "filter": {
+                "op": "<=",
+                "args": [{"property": "eo:cloud_cover"}, config.max_cloud_cover]
             },
-            "limit": page_size,
-            "sortby": [{"field": "datetime", "direction": "asc"}],
         }
 
-        page = 1
+        # ── Paginación via next link ────────────────────────────────────────
+        # CDSE no soporta page=N. Devuelve un link rel='next' con un token
+        # en la query string. Se hace GET (no POST) a ese link.
+        next_url: str | None = None
+        page_num = 1
+
         while True:
-            payload["page"] = page
-            resp = self._request_with_retry(endpoint, payload)
-            features = resp.get("features", [])
+            if next_url:
+                # Páginas siguientes: GET al next link (ya incluye el token)
+                data = self._get_with_retry(next_url)
+            else:
+                # Primera página: POST con el payload completo
+                data = self._post_with_retry(endpoint, payload)
+
+            if not data:
+                break
+
+            features = data.get("features", [])
             if not features:
                 break
+
             logger.debug(
                 "Parcela %s: página %d → %d productos",
-                parcel.parcel_id, page, len(features)
+                parcel.parcel_id, page_num, len(features),
             )
             for feature in features:
                 yield feature
-            # Si la página está completa seguimos paginando, si no, terminamos
-            if len(features) < page_size:
-                break
-            page += 1
 
-    def _request_with_retry(self, url: str, payload: dict) -> dict:
-        """POST con reintentos exponenciales ante errores de red/servidor."""
+            # Buscar el link 'next' para la siguiente página
+            links    = data.get("links", [])
+            next_obj = next((l for l in links if l.get("rel") == "next"), None)
+            if next_obj:
+                next_url = next_obj.get("href")
+                page_num += 1
+            else:
+                break   # No hay más páginas
+
+    # ── Helpers HTTP ─────────────────────────────────────────────────────────
+
+    def _post_with_retry(self, url: str, payload: dict) -> dict:
+        """POST con reintentos exponenciales y logging del cuerpo de error."""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 resp = requests.post(
                     url,
-                    json=payload,
-                    headers=self._auth.headers(),
-                    timeout=60,
+                    json    = payload,
+                    headers = {**self._auth.headers(), "Content-Type": "application/json"},
+                    timeout = 60,
                 )
                 if resp.status_code == 200:
                     return resp.json()
@@ -244,14 +286,44 @@ class STACSearcher:
                     logger.warning("Rate limit CDSE, esperando %ds...", wait)
                     time.sleep(wait)
                     continue
-                resp.raise_for_status()
+                # Logear el cuerpo del error para diagnóstico
+                logger.error(
+                    "STAC POST HTTP %d: %s",
+                    resp.status_code, resp.text[:400],
+                )
+                return {}
             except requests.RequestException as e:
                 if attempt == MAX_RETRIES:
-                    raise
+                    logger.error("STAC POST falló definitivamente: %s", e)
+                    return {}
                 wait = RETRY_BACKOFF ** attempt
-                logger.warning("Error en búsqueda (intento %d/%d): %s. Reintentando en %ds",
-                               attempt, MAX_RETRIES, e, wait)
+                logger.warning(
+                    "Error en búsqueda (intento %d/%d): %s. Reintentando en %ds",
+                    attempt, MAX_RETRIES, e, wait,
+                )
                 time.sleep(wait)
+        return {}
+
+    def _get_with_retry(self, url: str) -> dict:
+        """GET con reintentos para paginación via next link."""
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = requests.get(
+                    url,
+                    headers = self._auth.headers(),
+                    timeout = 60,
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+                if resp.status_code == 429:
+                    time.sleep(RETRY_BACKOFF ** attempt)
+                    continue
+                logger.error("STAC GET HTTP %d: %s", resp.status_code, resp.text[:300])
+                return {}
+            except requests.RequestException as e:
+                if attempt == MAX_RETRIES:
+                    return {}
+                time.sleep(RETRY_BACKOFF ** attempt)
         return {}
 
 
@@ -322,7 +394,7 @@ class BandDownloader:
                 logger.warning("  ↳ Banda %s no encontrada en producto %s", band, product.get("id"))
                 failed.append(band)
                 continue
-            out_file = out_dir / f"{band}.tif"
+            out_file = out_dir / f"{band}{BAND_EXT}"
             success  = self._download_file(asset["href"], out_file)
             if success:
                 downloaded += 1
@@ -348,26 +420,69 @@ class BandDownloader:
 
     def _find_band_asset(self, assets: dict, band: str) -> dict | None:
         """
-        Busca el asset correspondiente a una banda en el dict de assets del producto.
-        Los nombres de asset en CDSE siguen el patrón: B02, B02_10m, etc.
+        Busca el asset correcto para una banda en los assets del producto CDSE.
+
+        CDSE nombra los assets con resolución explícita: "B08_10m", "B05_20m".
+        Nunca existen como "B08" solo.
+
+        Estrategia:
+            1. Preferencia: {BAND}_{RES_PREFERIDA}m  (ej. B08_10m)
+            2. Fallback:    cualquier key que empiece por {BAND}_
+            3. Último recurso: URL del href contiene el nombre de la banda
         """
-        # Búsqueda exacta primero, luego por prefijo
+        band_up  = band.upper()
+        pref_res = BAND_PREFERRED_RES.get(band_up, "10m")
+
+        # 1. Key exacto con resolución preferida (ej. "B08_10m")
+        pref_key = f"{band_up}_{pref_res}"
+        if pref_key in assets:
+            return assets[pref_key]
+
+        # 2. Cualquier resolución de la misma banda (ej. B05_20m, B05_60m)
         for key, val in assets.items():
-            if key.upper() == band.upper():
+            if key.upper().startswith(f"{band_up}_"):
                 return val
+
+        # 3. Match exacto sin resolución (poco probable en CDSE pero por si acaso)
+        if band_up in assets:
+            return assets[band_up]
+
+        # 4. Buscar en la URL del href
         for key, val in assets.items():
-            if key.upper().startswith(band.upper()):
+            href = val.get("href", "").upper()
+            if f"_{band_up}_" in href or f"_{band_up}." in href:
                 return val
+
         return None
 
     def _already_downloaded(self, out_dir: Path, bands: list[str]) -> bool:
         """Retorna True si todas las bandas ya existen en disco."""
         if not out_dir.exists():
             return False
-        return all((out_dir / f"{b}.tif").exists() for b in bands)
+        return all((out_dir / f"{b}{BAND_EXT}").exists() for b in bands)
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """
+        Convierte S3 URIs de CDSE a URLs HTTPS descargables con Bearer token.
+
+        El catálogo STAC de CDSE a veces devuelve asset hrefs como:
+            s3://eodata/Sentinel-2/MSI/L2A/.../B11_20m.jp2
+
+        El bucket 'eodata' está expuesto vía HTTPS en:
+            https://eodata.dataspace.copernicus.eu/Sentinel-2/MSI/L2A/.../B11_20m.jp2
+
+        Este endpoint acepta el mismo Bearer token OAuth2 que el resto de la API.
+        requests no tiene adaptador para el esquema s3://, de ahí el error:
+            "No connection adapters were found for 's3://...'"
+        """
+        if url.startswith("s3://eodata/"):
+            return "https://eodata.dataspace.copernicus.eu/" + url[len("s3://eodata/"):]
+        return url
 
     def _download_file(self, url: str, dest: Path) -> bool:
         """Descarga un archivo con streaming y reintentos."""
+        url = self._normalize_url(url)
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 resp = requests.get(

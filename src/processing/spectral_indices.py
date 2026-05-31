@@ -344,11 +344,14 @@ class DateProcessor:
             return None
 
         # ── Detectar qué bandas existen ──
-        available = {
-            p.stem: p
-            for p in bands_dir.glob("*.tif")
-            if p.stem in {"B02", "B03", "B04", "B05", "B08", "B11"}
-        }
+        # Soporta .jp2 (descarga nativa CDSE) y .tif (conversión manual)
+        # Los archivos se llaman B02.jp2, B08.jp2, etc. (stem = nombre de banda)
+        band_names = {"B02", "B03", "B04", "B05", "B08", "B11"}
+        available = {}
+        for ext in ("*.jp2", "*.tif"):
+            for p in bands_dir.glob(ext):
+                if p.stem in band_names and p.stem not in available:
+                    available[p.stem] = p
         if not available:
             logger.warning("  No hay bandas en %s, skip", bands_dir)
             return None

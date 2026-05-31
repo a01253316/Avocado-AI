@@ -165,8 +165,8 @@ class TestBandDownloader:
     def test_already_downloaded_true_when_all_bands_present(self, tmp_path):
         auth       = MagicMock()
         downloader = BandDownloader(auth)
-        (tmp_path / "B02.tif").touch()
-        (tmp_path / "B04.tif").touch()
+        (tmp_path / "B02.jp2").touch()
+        (tmp_path / "B04.jp2").touch()
         result = downloader._already_downloaded(tmp_path, ["B02", "B04"])
         assert result is True
 
@@ -176,6 +176,65 @@ class TestBandDownloader:
         (tmp_path / "B02.tif").touch()
         result = downloader._already_downloaded(tmp_path, ["B02", "B04"])
         assert result is False
+
+    # ── _normalize_url ──────────────────────────────────────────────────────
+
+    def test_normalize_url_converts_s3_to_https(self):
+        """URI s3://eodata/ → URL HTTPS del gateway público de CDSE."""
+        downloader = BandDownloader(MagicMock())
+        s3_uri = (
+            "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
+            "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
+            "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
+            "IMG_DATA/R20m/T13QFB_20260528T172721_B11_20m.jp2"
+        )
+        result = BandDownloader._normalize_url(s3_uri)
+        assert result.startswith("https://eodata.dataspace.copernicus.eu/")
+        assert "s3://" not in result
+        assert result.endswith("B11_20m.jp2")
+
+    def test_normalize_url_passthrough_https(self):
+        """URLs HTTPS ya válidas se devuelven sin cambios."""
+        https_url = "https://zipper.dataspace.copernicus.eu/odata/v1/B02.jp2"
+        assert BandDownloader._normalize_url(https_url) == https_url
+
+    def test_normalize_url_passthrough_other_schemes(self):
+        """Otros esquemas no se tocan (comportamiento defensivo)."""
+        other = "ftp://example.com/file.jp2"
+        assert BandDownloader._normalize_url(other) == other
+
+    def test_download_file_resolves_s3_uri(self, tmp_path):
+        """
+        _download_file debe convertir s3:// antes de llamar a requests.get.
+
+        Sin _normalize_url, requests lanzaría:
+            "No connection adapters were found for 's3://...'"
+        """
+        auth = MagicMock()
+        auth.headers.return_value = {"Authorization": "Bearer tok"}
+        downloader = BandDownloader(auth)
+
+        s3_uri = (
+            "s3://eodata/Sentinel-2/MSI/L2A/2026/05/28/"
+            "S2A_MSIL2A_20260528T172721_N0512_R012_T13QFB_20260529T031509.SAFE/"
+            "GRANULE/L2A_T13QFB_A057095_20260528T173319/"
+            "IMG_DATA/R20m/T13QFB_20260528T172721_B11_20m.jp2"
+        )
+        dest = tmp_path / "B11.jp2"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_content.return_value = [b"fake-data"]
+
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            result = downloader._download_file(s3_uri, dest)
+
+        # Debe llamar requests.get con la URL HTTPS, no con el URI s3://
+        called_url = mock_get.call_args[0][0]
+        assert called_url.startswith("https://eodata.dataspace.copernicus.eu/")
+        assert "s3://" not in called_url
+        assert result is True
 
     def test_dry_run_does_not_write_files(self, tmp_path, sample_parcel, mock_product):
         auth               = MagicMock()
