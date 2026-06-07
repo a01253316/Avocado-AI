@@ -4,6 +4,10 @@
 # Data
 /data/
 
+# MLflow
+mlflow.db
+mlruns/
+
 # Mac OS-specific storage files
 .DS_Store
 

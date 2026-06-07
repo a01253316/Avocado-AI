@@ -1,0 +1,78 @@
+# configs/sentinel2.yaml
+# Configuración de descarga y procesamiento de imágenes Sentinel-2
+
+# ── Rango temporal ──────────────────────────────────────────
+time_range:
+  start: "2018-01-01"
+  end:   "2026-05-30"   # Actualizar con fecha actual
+
+# ── Configuración de la imagen ──────────────────────────────
+image:
+  resolution_m: 10          # Resolución espacial objetivo (metros)
+  max_cloud_cover_pct: 20   # % máximo de nubosidad aceptable
+  format: GeoTIFF
+
+# ── Bandas a descargar ──────────────────────────────────────
+# Solo las necesarias para los índices de estrés hídrico
+bands:
+  - name: B02   # Blue (490 nm)     → EVI
+    resolution_m: 10
+  - name: B03   # Green (560 nm)    → NDWI
+    resolution_m: 10
+  - name: B04   # Red (665 nm)      → NDVI, EVI
+    resolution_m: 10
+  - name: B05   # Red Edge (705 nm) → NDRE
+    resolution_m: 20
+  - name: B08   # NIR (842 nm)      → NDVI, NDWI, NDMI, NDRE, EVI
+    resolution_m: 10
+  - name: B11   # SWIR1 (1610 nm)   → NDMI
+    resolution_m: 20
+
+# ── Índices espectrales a calcular ─────────────────────────
+indices:
+  NDVI:
+    formula: "(B08 - B04) / (B08 + B04)"
+    range: [-1, 1]
+    interpretation: "Vigor vegetal general"
+  NDWI:
+    formula: "(B03 - B08) / (B03 + B08)"
+    range: [-1, 1]
+    interpretation: "Contenido de agua en vegetación"
+  NDMI:
+    formula: "(B08 - B11) / (B08 + B11)"
+    range: [-1, 1]
+    interpretation: "Humedad en hoja/dosel ★"
+  NDRE:
+    formula: "(B08 - B05) / (B08 + B05)"
+    range: [-1, 1]
+    interpretation: "Estrés temprano (clorofila) ★"
+  EVI:
+    formula: "2.5 * (B08 - B04) / (B08 + 6*B04 - 7.5*B02 + 1)"
+    range: [-1, 1]
+    interpretation: "Vegetación en zonas densas"
+
+# ── Rutas ──────────────────────────────────────────────────
+paths:
+  raw_sentinel2:  data/raw/sentinel2/
+  processed_patches: data/processed/patches/
+  processed_indices: data/processed/indices/
+  datasets:          data/datasets/
+
+# ── Modelo CNN (futuro) ─────────────────────────────────────
+cnn:
+  input_channels: 6     # Número de bandas
+  patch_size_px: 64     # Tamaño del chip en píxeles
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  
+# ── Modelo ViT for SITS (futuro) ────────────────────────────
+vit:
+  sequence_length: 24   # Número de fechas en la serie temporal
+  patch_size_px: 64
+  embed_dim: 128
+  num_heads: 8
+  num_layers: 6
+  batch_size: 16
+  epochs: 100
+  learning_rate: 0.0001

@@ -1,0 +1,35 @@
+# configs/parcels.yaml
+# Configuración de parcelas para el pipeline de descarga e ingesta
+
+parcels:
+  kml_source: data/raw/parcels/aguacates_jalisco_5_5_26.kml
+  csv_output:  data/raw/parcels/parcelas.csv
+
+  # Radio de recorte alrededor de cada punto (en metros)
+  # 250m → chip de ~500m x 500m = ~50 px a 10m/px de Sentinel-2
+  buffer_m: 250
+
+  # Estados cubiertos (para filtros futuros)
+  states:
+    - Jalisco
+    - Michoacan
+
+  # Número esperado de parcelas (para validación del pipeline)
+  expected_count: 100
+
+  # Columnas requeridas en el CSV de salida
+  required_columns:
+    - parcel_id
+    - latitude
+    - longitude
+    - altitude_m
+    - state
+    - buffer_m
+    - bbox_west
+    - bbox_east
+    - bbox_south
+    - bbox_north
+    - sentinel2_tile
+    - download_ready
+    - processed
+    - indices_computed
