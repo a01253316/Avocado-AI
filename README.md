@@ -1,83 +1,91 @@
-# 🥑 Avocado Stress MLOps
-**ViTs for SITS** — Vision Transformers for Satellite Image Time Series  
-Detección de estrés hídrico en parcelas de aguacate (Jalisco / Michoacán) usando imágenes Sentinel-2.
+# 🥑 AguaVerde — Detección de Estrés Hídrico en Aguacate
+
+Sistema de monitoreo satelital para cooperativas aguacateras en Jalisco, México.  
+Combina imágenes Sentinel-2, modelos de ensemble y un reporte agronómico generado por **Claude** (Anthropic).
 
 ---
 
-## 🎯 Objetivo
-Construir un pipeline MLOps end-to-end que:
-1. Ingiera imágenes multiespectrales de Sentinel-2 por parcela y rango de fechas
-2. Calcule índices de vegetación (NDVI, NDWI, NDMI, NDRE, EVI)
-3. Construya series de tiempo por parcela (SITS)
-4. Entrene modelos CNN / ViT para detectar estrés hídrico
-5. Sirva predicciones vía API
+## 🎯 ¿Qué hace el sistema?
+
+1. Descarga y procesa series temporales de imágenes Sentinel-2 por parcela
+2. Extrae 5 índices espectrales (NDVI, NDWI, NDMI, NDRE, EVI) en ventanas deslizantes
+3. Predice el nivel de estrés hídrico con un modelo **E3 Stacking** (F1-macro = **0.8868**)
+4. Genera un reporte agronómico en español con **Claude** (multimodal — acepta foto del campo)
+5. Visualiza todo en un **dashboard interactivo** con mapa Leaflet
+
+---
+
+## 🏆 Modelo Final — E3 Stacking
+
+| Componente       | Detalle                                    |
+|------------------|--------------------------------------------|
+| Base learners    | Random Forest · XGBoost · SVM (RBF)       |
+| Meta-learner     | Logistic Regression                        |
+| Features         | 35 estadísticos × ventana de 24 fechas     |
+| Split            | GroupShuffleSplit por `parcel_id`          |
+| **F1-macro**     | **0.8868**                                 |
+
+**Clases de estrés:**
+
+| Clase | Etiqueta       | NDMI normalizado |
+|-------|----------------|------------------|
+| 0     | Sin estrés     | > 0.2493         |
+| 1     | Moderado       | 0.0571 – 0.2493  |
+| 2     | Severo         | < 0.0571         |
+
+---
 
 ## 📦 Stack
-- **Datos**: Sentinel-2 (ESA), Alpha Earth API
-- **Tracking**: MLflow + DVC
-- **Orquestación**: Makefile → (futuro: Prefect / Airflow)
-- **Modelos**: PyTorch — CNN pixel-level → ViT para series de tiempo
-- **Serving**: FastAPI
+
+| Capa          | Tecnología                                              |
+|---------------|---------------------------------------------------------|
+| Datos         | Sentinel-2 (ESA / CDSE), 100 parcelas en Jalisco       |
+| Modelo        | scikit-learn · XGBoost · joblib                        |
+| Backend       | FastAPI · Pydantic-Settings · Uvicorn                  |
+| LLM           | Anthropic Claude (`claude-opus-4-8`) — multimodal      |
+| Frontend      | Vanilla JS · Leaflet.js · Chart.js                     |
+| Notebooks     | Jupyter · MLflow (tracking de experimentos)            |
 
 ---
 
 ## 🗂️ Estructura del Proyecto
 
 ```
-avocado-stress-mlops/
-├── data/
-│   ├── raw/
-│   │   ├── parcels/          # KML original + CSV extraído
-│   │   └── sentinel2/        # TIFFs descargados por parcela/fecha
-│   ├── processed/
-│   │   ├── patches/          # Recortes (chips) por parcela
-│   │   └── indices/          # Rasters de NDVI, NDWI, NDMI, NDRE, EVI
-│   └── datasets/             # Datasets listos para entrenamiento (.npy / .pt)
+integrative-project/
+├── api/                          # Backend FastAPI
+│   ├── main.py                   # Endpoints + montura del frontend
+│   ├── config.py                 # Settings (pydantic-settings + .env)
+│   ├── features.py               # Extracción de 35 features por ventana
+│   ├── predictor.py              # E3 Stacking inference (lru_cache)
+│   ├── sentinel.py               # LocalCatalog — haversine nearest parcel
+│   └── llm.py                    # Reporte agronómico con Claude
 │
-├── src/
-│   ├── ingestion/
-│   │   ├── kml_to_csv.py         # ★ Extracción KML → CSV
-│   │   ├── sentinel2_downloader.py   # Descarga por parcela + fecha
-│   │   └── alpha_earth_client.py     # Cliente Alpha Earth API
-│   ├── processing/
-│   │   ├── spectral_indices.py   # Cálculo NDVI, NDWI, NDMI, NDRE, EVI
-│   │   ├── patch_extractor.py    # Recorte de chips por parcela
-│   │   └── time_series_builder.py # Apila imágenes en series temporales
-│   ├── features/
-│   │   └── feature_engineering.py
-│   ├── models/
-│   │   ├── cnn/
-│   │   │   ├── pixel_classifier.py
-│   │   │   └── train_cnn.py
-│   │   └── vit/
-│   │       ├── sits_vit.py       # ViT for SITS (paper base)
-│   │       └── train_vit.py
-│   └── utils/
-│       ├── geo_utils.py
-│       └── io_utils.py
+├── frontend/                     # Dashboard web (servido en /ui)
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+│
+├── models/                       # Artefactos serializados
+│   ├── ensemble_stacking.joblib  # E3 Stacking (pipeline de 3 base learners)
+│   ├── ensemble_scaler.joblib    # MinMaxScaler
+│   └── ensemble_meta.json        # Umbrales NDMI normalizados
+│
+├── data/
+│   └── raw/parcels/
+│       ├── parcelas.csv          # 100 parcelas (lat, lon, tile, estado)
+│       └── patches/              # Parches .npz — shape (277, 5, 50, 53)
 │
 ├── notebooks/
-│   ├── 01_eda_parcelas.ipynb
-│   ├── 02_sentinel2_exploracion.ipynb
-│   └── 03_indices_analisis.ipynb
+│   ├── Avance5.equipo16.ipynb    # Notebook principal: features → modelos → evaluación
+│   └── 01_eda_parcelas.ipynb     # EDA de parcelas y Sentinel-2
 │
-├── configs/
-│   ├── parcels.yaml          # Config de parcelas y buffer
-│   └── sentinel2.yaml        # Bandas, fechas, tile
-│
-├── pipelines/
-│   ├── ingestion_pipeline.py
-│   └── processing_pipeline.py
-│
+├── configs/                      # YAMLs de parcelas y Sentinel-2
+├── src/                          # Scripts de ingesta y procesamiento
 ├── tests/
-│   ├── test_kml_to_csv.py
-│   └── test_spectral_indices.py
-│
-├── .dvc/
-├── MLproject
-├── params.yaml
+├── requirements.txt              # Dependencias del notebook / ML
+├── requirements-api.txt          # Dependencias del backend
 ├── Makefile
-├── requirements.txt
+├── .env.example                  # Plantilla de variables de entorno
 └── README.md
 ```
 
@@ -85,39 +93,97 @@ avocado-stress-mlops/
 
 ## 🚀 Inicio Rápido
 
+### 1. Variables de entorno
+
 ```bash
-# 1. Setup del entorno
-make setup
+cp .env.example .env
+# Edita .env con tus credenciales:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   CDSE_USER=tu_email@ejemplo.com
+#   CDSE_PASSWORD=tu_contraseña
+```
 
-# 2. Extracción KML → CSV
-make extract-parcels
+### 2. Instalar dependencias
 
-# 3. Descarga de imágenes Sentinel-2
-make download-sentinel2 START=2020-01-01 END=2026-05-30
+```bash
+pip install -r requirements-api.txt
+```
 
-# 4. Calcular índices espectrales
-make compute-indices
+### 3. Levantar el backend + dashboard
 
-# 5. Entrenar CNN baseline
-make train-cnn
+```bash
+uvicorn api.main:app --reload
+```
+
+Abre **http://127.0.0.1:8000/ui** para el dashboard interactivo.  
+La documentación automática de la API está en **http://127.0.0.1:8000/docs**.
+
+---
+
+## 🗺️ Dashboard
+
+El dashboard permite a la cooperativa:
+
+- **Visualizar las 100 parcelas** en un mapa interactivo de Jalisco con marcadores coloreados por nivel de estrés
+- **⚡ Escanear mapa** — analiza las primeras 30 parcelas en batch (solo ML, sin LLM) para colorear el mapa en tiempo real
+- **Clic en cualquier marcela** → diagnóstico completo: índices, gráfica de tendencia NDMI, barras de probabilidad y reporte Claude
+- **Nueva ubicación** → ingresar lat/lon manualmente + foto del campo opcional para análisis multimodal
+- **Filtros** por nivel de estrés (sin estrés / moderado / severo)
+
+---
+
+## 🌐 API Endpoints
+
+| Método | Ruta                  | Descripción                                           |
+|--------|-----------------------|-------------------------------------------------------|
+| GET    | `/health`             | Liveness check                                        |
+| GET    | `/parcels`            | Lista parcelas (`?limit=N`, máx 200)                  |
+| POST   | `/analyze`            | Diagnóstico por coordenadas GPS + foto opcional       |
+| POST   | `/analyze/parcel`     | Diagnóstico por `parcel_id` directo                   |
+| GET    | `/ui`                 | Dashboard web (Leaflet + Chart.js)                    |
+| GET    | `/docs`               | Swagger UI autogenerado                               |
+
+### Ejemplo — POST /analyze
+
+```json
+{
+  "lat": 19.6630,
+  "lon": -103.4870,
+  "photo_b64": null,
+  "skip_llm": false
+}
+```
+
+Respuesta:
+```json
+{
+  "location": { "parcel_id": "H1", "dist_km": 0.12, "state": "Jalisco" },
+  "stress":   { "class": 1, "label": "Moderado", "emoji": "🟡", "confidence": 0.94 },
+  "indices":  { "NDMI": 0.1823, "NDVI": 0.6102, "NDWI": 0.1045, "NDRE": 0.3421, "EVI": 0.4809 },
+  "trend":    { "direction": "descendente", "worsening_alert": true, "windows": [...] },
+  "llm_report": { "full_text": "...", "model_used": "claude-opus-4-8" }
+}
 ```
 
 ---
 
-## 📡 Bandas Sentinel-2 Usadas
+## 📡 Índices Espectrales Sentinel-2
 
-| Índice | Bandas          | Qué mide                         |
-|--------|-----------------|----------------------------------|
-| NDVI   | B08, B04        | Vigor vegetal general            |
-| NDWI   | B03, B08        | Contenido de agua en vegetación  |
-| NDMI   | B08, B11        | Humedad en hoja/dosel ★          |
-| NDRE   | B08, B05        | Estrés temprano (clorofila) ★    |
-| EVI    | B08, B04, B02   | Vegetación en zonas densas       |
+| Índice | Bandas        | Qué mide                          |
+|--------|---------------|-----------------------------------|
+| NDMI   | B08, B11      | Humedad en hoja/dosel ★ (clave)   |
+| NDVI   | B08, B04      | Vigor vegetal general             |
+| NDWI   | B03, B08      | Contenido de agua en vegetación   |
+| NDRE   | B08, B05      | Estrés temprano — clorofila ★     |
+| EVI    | B08, B04, B02 | Vegetación en zonas densas        |
 
-★ Más directos para estrés hídrico.
+Cada parche tiene shape `(T=277, C=5, H=50, W=53)`.  
+Las features se extraen con una ventana deslizante de W=24 fechas (paso=4): **7 estadísticos × 5 canales = 35 features**.
 
 ---
 
 ## 📌 Referencias
+
 - Garnot & Landrieu (2021) — *ViTs for SITS: Vision Transformers for Satellite Image Time Series*
-- ESA Sentinel-2 User Guide
+- ESA — Sentinel-2 User Guide
+- Anthropic — [Claude API](https://docs.anthropic.com)
