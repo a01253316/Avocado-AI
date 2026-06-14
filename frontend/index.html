@@ -3,30 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AguaVerde — Monitoreo de Estrés Hídrico</title>
+  <title>AguaVerde - Monitoreo de Estres Hidrico</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-  <!-- ── Header ─────────────────────────────────────────────── -->
+  <!-- -- Header ----------------------------------------------- -->
   <header class="header">
     <div class="header-brand">
-      <span class="header-icon">🥑</span>
+      <span class="header-icon"></span>
       <div>
         <h1 class="header-title">AguaVerde</h1>
-        <p class="header-subtitle">Cooperativa Aguacatera · Jalisco, México</p>
+        <p class="header-subtitle">Cooperativa Aguacatera - Jalisco, Mexico</p>
       </div>
     </div>
 
     <div class="header-stats">
       <div class="stat-chip" id="stat-total">
-        <span class="stat-value" id="v-total">—</span>
+        <span class="stat-value" id="v-total">-</span>
         <span class="stat-label">Parcelas</span>
       </div>
       <div class="stat-chip stat-green">
         <span class="stat-value" id="v-green">0</span>
-        <span class="stat-label">Sin estrés</span>
+        <span class="stat-label">Sin estres</span>
       </div>
       <div class="stat-chip stat-yellow">
         <span class="stat-value" id="v-yellow">0</span>
@@ -40,16 +40,16 @@
 
     <div class="header-actions">
       <button class="btn btn-outline" id="btn-scan" title="Analizar parcelas visibles sin reporte LLM">
-        ⚡ Escanear mapa
+         Escanear mapa
       </button>
       <button class="btn btn-outline" id="btn-filter-all" title="Mostrar todas">Todas</button>
-      <button class="btn btn-dot btn-dot-green"  id="btn-filter-0" title="Solo sin estrés"></button>
+      <button class="btn btn-dot btn-dot-green"  id="btn-filter-0" title="Solo sin estres"></button>
       <button class="btn btn-dot btn-dot-yellow" id="btn-filter-1" title="Solo moderado"></button>
       <button class="btn btn-dot btn-dot-red"    id="btn-filter-2" title="Solo severo"></button>
     </div>
   </header>
 
-  <!-- ── Layout ──────────────────────────────────────────────── -->
+  <!-- -- Layout ------------------------------------------------ -->
   <main class="main-layout">
 
     <!-- Map -->
@@ -61,18 +61,18 @@
     <aside class="side-panel">
 
       <div class="tabs">
-        <button class="tab active" data-tab="parcel">📍 Diagnóstico</button>
+        <button class="tab active" data-tab="parcel"> Diagnostico</button>
         <button class="tab" data-tab="sam2">SAM2</button>
-        <button class="tab" data-tab="new">➕ Nueva ubicación</button>
+        <button class="tab" data-tab="new">+ Nueva ubicacion</button>
       </div>
 
-      <!-- ── Tab: Parcel info ─────────────────────────────────── -->
+      <!-- -- Tab: Parcel info ----------------------------------- -->
       <div class="tab-content" id="tab-parcel">
 
         <div class="empty-state" id="empty-state">
-          <div class="empty-icon">🗺️</div>
-          <p>Selecciona una parcela en el mapa<br />o ingresa coordenadas en la otra pestaña</p>
-          <p class="empty-hint">Usa <strong>⚡ Escanear mapa</strong> para colorear todas las parcelas.</p>
+          <div class="empty-icon"></div>
+          <p>Selecciona una parcela en el mapa<br />o ingresa coordenadas en la otra pestana</p>
+          <p class="empty-hint">Usa <strong> Escanear mapa</strong> para colorear todas las parcelas.</p>
         </div>
 
         <div class="parcel-card hidden" id="parcel-card">
@@ -80,75 +80,75 @@
           <!-- Header -->
           <div class="parcel-header">
             <div>
-              <h2 class="parcel-id" id="parcel-id">—</h2>
-              <p class="parcel-meta" id="parcel-meta">—</p>
+              <h2 class="parcel-id" id="parcel-id">-</h2>
+              <p class="parcel-meta" id="parcel-meta">-</p>
             </div>
-            <div class="stress-badge" id="stress-badge">—</div>
+            <div class="stress-badge" id="stress-badge">-</div>
           </div>
 
           <!-- Confidence -->
           <div class="confidence-row">
             <span class="conf-label">Confianza del modelo</span>
-            <span class="conf-value" id="conf-value">—</span>
+            <span class="conf-value" id="conf-value">-</span>
           </div>
           <div class="progress-bar-wrap">
             <div class="progress-fill" id="conf-bar" style="width:0%"></div>
           </div>
 
           <!-- Indices -->
-          <div class="section-label">📡 Índices espectrales</div>
+          <div class="section-label"> Indices espectrales</div>
           <div class="indices-grid">
             <div class="index-card index-ndmi">
               <span class="idx-name">NDMI <span class="idx-tag">clave</span></span>
-              <span class="idx-value" id="idx-ndmi">—</span>
+              <span class="idx-value" id="idx-ndmi">-</span>
             </div>
             <div class="index-card">
               <span class="idx-name">NDVI</span>
-              <span class="idx-value" id="idx-ndvi">—</span>
+              <span class="idx-value" id="idx-ndvi">-</span>
             </div>
             <div class="index-card">
               <span class="idx-name">NDWI</span>
-              <span class="idx-value" id="idx-ndwi">—</span>
+              <span class="idx-value" id="idx-ndwi">-</span>
             </div>
             <div class="index-card">
               <span class="idx-name">NDRE</span>
-              <span class="idx-value" id="idx-ndre">—</span>
+              <span class="idx-value" id="idx-ndre">-</span>
             </div>
             <div class="index-card">
               <span class="idx-name">EVI</span>
-              <span class="idx-value" id="idx-evi">—</span>
+              <span class="idx-value" id="idx-evi">-</span>
             </div>
           </div>
 
           <!-- Trend -->
-          <div class="section-label">📈 Tendencia NDMI</div>
-          <div class="trend-direction" id="trend-dir">—</div>
+          <div class="section-label"> Tendencia NDMI</div>
+          <div class="trend-direction" id="trend-dir">-</div>
           <div class="chart-wrap">
             <canvas id="trend-chart"></canvas>
           </div>
 
           <!-- Probabilities mini bar -->
-          <div class="section-label">🎯 Distribución de probabilidades</div>
+          <div class="section-label"> Distribucion de probabilidades</div>
           <div class="prob-bars" id="prob-bars">
             <div class="prob-row">
-              <span class="prob-label">Sin estrés</span>
+              <span class="prob-label">Sin estres</span>
               <div class="prob-bar-bg"><div class="prob-bar pb-green" id="pb-0" style="width:0%"></div></div>
-              <span class="prob-pct" id="pct-0">—</span>
+              <span class="prob-pct" id="pct-0">-</span>
             </div>
             <div class="prob-row">
               <span class="prob-label">Moderado</span>
               <div class="prob-bar-bg"><div class="prob-bar pb-yellow" id="pb-1" style="width:0%"></div></div>
-              <span class="prob-pct" id="pct-1">—</span>
+              <span class="prob-pct" id="pct-1">-</span>
             </div>
             <div class="prob-row">
               <span class="prob-label">Severo</span>
               <div class="prob-bar-bg"><div class="prob-bar pb-red" id="pb-2" style="width:0%"></div></div>
-              <span class="prob-pct" id="pct-2">—</span>
+              <span class="prob-pct" id="pct-2">-</span>
             </div>
           </div>
 
           <!-- LLM Report -->
-          <div class="section-label">🤖 Reporte agronómico <span id="report-model" class="model-tag"></span></div>
+          <div class="section-label"> Reporte agronomico <span id="report-model" class="model-tag"></span></div>
           <div class="report-body" id="report-body">
             <div class="loading-dots"><span></span><span></span><span></span></div>
           </div>
@@ -229,7 +229,7 @@
         </div>
       </div>
 
-      <!-- ── Tab: New location ───────────────────────────────── -->
+      <!-- -- Tab: New location --------------------------------- -->
       <div class="tab-content hidden" id="tab-new">
         <form class="new-form" id="new-form" autocomplete="off">
 
@@ -250,12 +250,12 @@
             <div class="file-drop" id="file-drop">
               <input type="file" id="inp-photo" accept="image/jpeg,image/png,image/webp" />
               <div class="drop-hint" id="drop-hint">
-                <span class="drop-icon">📷</span>
+                <span class="drop-icon"></span>
                 <span>Arrastra o selecciona imagen</span>
-                <span class="drop-sub">JPEG, PNG, WebP · Activa analisis visual si el modelo local lo soporta</span>
+                <span class="drop-sub">JPEG, PNG, WebP - Activa analisis visual si el modelo local lo soporta</span>
               </div>
               <img id="photo-preview" class="hidden" alt="preview" />
-              <button type="button" class="clear-photo hidden" id="clear-photo">✕</button>
+              <button type="button" class="clear-photo hidden" id="clear-photo">x</button>
             </div>
           </div>
 
@@ -265,11 +265,11 @@
           </div>
 
           <button type="submit" class="btn btn-primary" id="btn-analyze">
-            🔍 Analizar ubicación
+             Analizar ubicacion
           </button>
 
           <p class="form-note">
-            El sistema localizará la parcela Sentinel-2 más cercana al punto indicado.
+            El sistema localizara la parcela Sentinel-2 mas cercana al punto indicado.
           </p>
         </form>
       </div>
@@ -277,18 +277,18 @@
     </aside>
   </main>
 
-  <!-- ── Map legend ──────────────────────────────────────────── -->
+  <!-- -- Map legend -------------------------------------------- -->
   <div class="map-legend" id="map-legend">
-    <div class="legend-item"><span class="legend-dot" style="background:#388E3C"></span> Sin estrés</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#388E3C"></span> Sin estres</div>
     <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> Moderado</div>
     <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> Severo</div>
     <div class="legend-item"><span class="legend-dot" style="background:#9E9E9E"></span> Sin analizar</div>
   </div>
 
-  <!-- ── Toast container ────────────────────────────────────── -->
+  <!-- -- Toast container -------------------------------------- -->
   <div id="toasts"></div>
 
-  <!-- ── Scripts ────────────────────────────────────────────── -->
+  <!-- -- Scripts ---------------------------------------------- -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>

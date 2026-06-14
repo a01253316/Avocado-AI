@@ -1,8 +1,8 @@
-/* ─────────────────────────────────────────────────────────────
-   AguaVerde — Dashboard JS
-   ───────────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------
+   AguaVerde - Dashboard JS
+   ------------------------------------------------------------- */
 
-const API       = '';   // same origin — FastAPI at /
+const API       = '';   // same origin - FastAPI at /
 const MAP_CTR   = [20.5, -103.5];
 const MAP_ZOOM  = 9;
 
@@ -23,12 +23,12 @@ async function readJsonOrThrow(res) {
 }
 
 const COLOR = { 0: '#388E3C', 1: '#F9A825', 2: '#C62828', null: '#9E9E9E' };
-const LABEL = { 0: '🟢 Sin estrés', 1: '🟡 Estrés moderado', 2: '🔴 Estrés severo' };
+const LABEL = { 0: ' Sin estres', 1: ' Estres moderado', 2: ' Estres severo' };
 
-/* ── State ──────────────────────────────────────────────────── */
+/* -- State ---------------------------------------------------- */
 let map, trendChart, sam2Layer;
-let markers  = {};   // parcel_id → Leaflet marker
-let results  = {};   // parcel_id → analysis result
+let markers  = {};   // parcel_id -> Leaflet marker
+let results  = {};   // parcel_id -> analysis result
 let sam2Masks = {};  // parcel_id -> pixel mask result
 let sam2Visible = { 0: true, 1: true, 2: true, pending: true };
 let parcels  = [];   // all parcels from /parcels
@@ -37,7 +37,7 @@ let photoMime = 'image/jpeg';
 let filterCls = null;   // null = show all
 let scanning  = false;
 
-/* ── Bootstrap ──────────────────────────────────────────────── */
+/* -- Bootstrap ------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
   initTabs();
@@ -47,13 +47,13 @@ document.addEventListener('DOMContentLoaded', () => {
   loadParcels();
 });
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    MAP
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function initMap() {
   map = L.map('map', { center: MAP_CTR, zoom: MAP_ZOOM, zoomControl: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a> contributors © <a href="https://carto.com">CARTO</a>',
+    attribution: '(c) <a href="https://openstreetmap.org">OpenStreetMap</a> contributors (c) <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 20,
   }).addTo(map);
   sam2Layer = L.layerGroup().addTo(map);
@@ -89,7 +89,7 @@ function makeIcon(cls, pulse = false) {
   });
 }
 
-/* ── Ripple keyframe injection ─── */
+/* -- Ripple keyframe injection --- */
 const rippleStyle = document.createElement('style');
 rippleStyle.textContent = `
   @keyframes ripple {
@@ -98,9 +98,9 @@ rippleStyle.textContent = `
   }`;
 document.head.appendChild(rippleStyle);
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    LOAD PARCELS
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 async function loadParcels() {
   try {
     const res  = await fetch(`${API}/parcels?limit=200`);
@@ -138,9 +138,9 @@ function onMarkerClick(p) {
   analyzeParcelAndRender(p.parcel_id, false);
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    ANALYSIS
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 async function analyzeParcel(parcelId, skipLlm = false) {
   try {
     const res = await fetch(`${API}/analyze/parcel`, {
@@ -186,32 +186,32 @@ async function analyzeParcelAndRender(parcelId, skipLlm = false) {
   if (data) renderResult(data);
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    RENDER
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function showLoadingCard(parcelId, lat, lon, state) {
   document.getElementById('empty-state').classList.add('hidden');
   document.getElementById('parcel-card').classList.remove('hidden');
   document.getElementById('parcel-id').textContent  = parcelId;
   document.getElementById('parcel-meta').textContent = (lat && lon)
-    ? `${lat.toFixed(4)}, ${lon.toFixed(4)}${state ? ' · ' + state : ''}`
-    : 'Cargando…';
+    ? `${lat.toFixed(4)}, ${lon.toFixed(4)}${state ? ' - ' + state : ''}`
+    : 'Cargando...';
   const badge = document.getElementById('stress-badge');
-  badge.textContent = '…';
+  badge.textContent = '...';
   badge.className   = 'stress-badge';
-  document.getElementById('conf-value').textContent = '—';
+  document.getElementById('conf-value').textContent = '-';
   document.getElementById('conf-bar').style.width   = '0%';
   ['ndmi','ndvi','ndwi','ndre','evi'].forEach(k =>
-    document.getElementById(`idx-${k}`).textContent = '…'
+    document.getElementById(`idx-${k}`).textContent = '...'
   );
-  document.getElementById('trend-dir').textContent  = '—';
+  document.getElementById('trend-dir').textContent  = '-';
   document.getElementById('trend-dir').className    = 'trend-direction sin_datos';
   document.getElementById('report-body').innerHTML  =
     '<div class="loading-dots"><span></span><span></span><span></span></div>';
   document.getElementById('report-model').textContent = '';
   ['0','1','2'].forEach(i => {
     document.getElementById(`pb-${i}`).style.width = '0%';
-    document.getElementById(`pct-${i}`).textContent = '—';
+    document.getElementById(`pct-${i}`).textContent = '-';
   });
   if (trendChart) { trendChart.destroy(); trendChart = null; }
 }
@@ -228,7 +228,7 @@ function renderResult(data) {
   if (location.dist_km != null) parts.push(`${location.dist_km.toFixed(2)} km`);
   if (location.state)           parts.push(location.state);
   if (location.parcel_lat)      parts.push(`${location.parcel_lat.toFixed(4)}, ${location.parcel_lon.toFixed(4)}`);
-  document.getElementById('parcel-meta').textContent = parts.join(' · ');
+  document.getElementById('parcel-meta').textContent = parts.join(' - ');
 
   // Badge
   const badge = document.getElementById('stress-badge');
@@ -253,17 +253,17 @@ function renderResult(data) {
   const dir  = trend.direction || 'sin_datos';
   const dirEl = document.getElementById('trend-dir');
   dirEl.textContent = {
-    descendente: '⬇ Tendencia descendente',
-    ascendente:  '⬆ Tendencia ascendente',
-    estable:     '➡ Tendencia estable',
-    sin_datos:   '— Sin datos suficientes',
-  }[dir] || '—';
+    descendente: 'v Tendencia descendente',
+    ascendente:  '^ Tendencia ascendente',
+    estable:     '-> Tendencia estable',
+    sin_datos:   '- Sin datos suficientes',
+  }[dir] || '-';
   dirEl.className = `trend-direction ${dir}`;
   renderTrendChart(trend.windows || []);
 
   // Probabilities
   const probs = stress.probabilities;
-  const keys  = ['Sin estrés', 'Moderado', 'Severo'];
+  const keys  = ['Sin estres', 'Moderado', 'Severo'];
   keys.forEach((k, i) => {
     const pct = Math.round((probs[k] || 0) * 100);
     document.getElementById(`pb-${i}`).style.width  = `${pct}%`;
@@ -286,7 +286,7 @@ function renderResult(data) {
   }
 }
 
-/* ── Trend chart ─────────────────────────────────────────────── */
+/* -- Trend chart ----------------------------------------------- */
 function renderTrendChart(windows) {
   if (trendChart) { trendChart.destroy(); trendChart = null; }
   if (!windows.length) return;
@@ -328,9 +328,9 @@ function renderTrendChart(windows) {
   });
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    STATS & FILTER
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function updateStats() {
   let g = 0, y = 0, r = 0;
   Object.values(results).forEach(d => {
@@ -359,9 +359,9 @@ function applyFilter() {
   });
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    SCAN ALL
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 async function scanAll() {
   if (scanning) return;
   scanning = true;
@@ -386,7 +386,7 @@ async function scanAll() {
   }
 
   for (const p of toScan) {
-    overlay.textContent = `⚡ Escaneando ${done + 1}/${toScan.length} · ${p.parcel_id}`;
+    overlay.textContent = ` Escaneando ${done + 1}/${toScan.length} - ${p.parcel_id}`;
     await analyzeParcel(p.parcel_id, true);
     done++;
     await sleep(80);   // avoid overwhelming the server
@@ -395,7 +395,7 @@ async function scanAll() {
   overlay.remove();
   btn.disabled = false;
   scanning = false;
-  showToast(`✅ Escaneo completo: ${done} parcelas analizadas`, 'success');
+  showToast(` Escaneo completo: ${done} parcelas analizadas`, 'success');
   if (activeTab() === 'sam2') renderSam2View();
 }
 
@@ -408,9 +408,9 @@ function visibleParcels() {
   });
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    TABS
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function initTabs() {
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -528,7 +528,7 @@ async function scanSam2All() {
   let done = 0;
 
   for (const p of pending) {
-    overlay.textContent = `SAM2 pixeles ${done + 1}/${pending.length} · ${p.parcel_id}`;
+    overlay.textContent = `SAM2 pixeles ${done + 1}/${pending.length} - ${p.parcel_id}`;
     await loadSam2Mask(p.parcel_id);
     done++;
     if (done % 5 === 0) renderSam2View();
@@ -671,9 +671,9 @@ function maskToDataUrl(mask) {
   return canvas.toDataURL('image/png');
 }
 
-/* ══════════════════════════════════════════════════════════════
-   FORM (nueva ubicación)
-══════════════════════════════════════════════════════════════ */
+/* ==============================================================
+   FORM (nueva ubicacion)
+============================================================== */
 function initForm() {
   const fileIn   = document.getElementById('inp-photo');
   const preview  = document.getElementById('photo-preview');
@@ -713,18 +713,18 @@ function initForm() {
     const btn  = document.getElementById('btn-analyze');
 
     if (isNaN(lat) || isNaN(lon)) {
-      showToast('Ingresa coordenadas válidas', 'error');
+      showToast('Ingresa coordenadas validas', 'error');
       return;
     }
     if (lat < 15 || lat > 25 || lon < -108 || lon > -95) {
-      showToast('Las coordenadas están fuera de Jalisco / México', 'info');
+      showToast('Las coordenadas estan fuera de Jalisco / Mexico', 'info');
     }
 
     btn.disabled    = true;
-    btn.textContent = '⏳ Analizando…';
+    btn.textContent = ' Analizando...';
 
     switchTab('parcel');
-    showLoadingCard('Nueva ubicación', lat, lon, null);
+    showLoadingCard('Nueva ubicacion', lat, lon, null);
 
     let tempMarker = L.marker([lat, lon], { icon: makeIcon(null, true) }).addTo(map);
     map.flyTo([lat, lon], 13, { duration: 1.2 });
@@ -735,7 +735,7 @@ function initForm() {
       const cls = data.stress.class;
       tempMarker.setIcon(makeIcon(cls, false));
       tempMarker.bindPopup(`
-        <b>📍 ${lat.toFixed(4)}, ${lon.toFixed(4)}</b><br>
+        <b> ${lat.toFixed(4)}, ${lon.toFixed(4)}</b><br>
         Parcela ref: ${data.location.parcel_id}<br>
         ${LABEL[cls]}
       `).openPopup();
@@ -746,14 +746,14 @@ function initForm() {
       document.getElementById('parcel-card').classList.add('hidden');
     } finally {
       btn.disabled    = false;
-      btn.textContent = '🔍 Analizar ubicación';
+      btn.textContent = ' Analizar ubicacion';
     }
   });
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    FILTERS
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function initFilters() {
   document.getElementById('btn-scan').addEventListener('click', scanAll);
 
@@ -778,11 +778,11 @@ function setFilterActive(cls) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════
+/* ==============================================================
    UTILS
-══════════════════════════════════════════════════════════════ */
+============================================================== */
 function fmt(v) {
-  return (v != null && !isNaN(v)) ? (+v).toFixed(4) : '—';
+  return (v != null && !isNaN(v)) ? (+v).toFixed(4) : '-';
 }
 
 function showToast(msg, type = '') {
