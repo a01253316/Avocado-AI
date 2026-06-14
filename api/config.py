@@ -6,9 +6,12 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── Anthropic Claude ────────────────────────────────────────
-    anthropic_api_key: str
+    # LLM provider: Ollama local by default; Claude remains optional.
+    llm_provider: str = "ollama"
+    anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "openllama"
 
     # ── Rutas del proyecto ──────────────────────────────────────
     project_root: Path = Path(__file__).parent.parent
@@ -16,8 +19,8 @@ class Settings(BaseSettings):
     scaler_path:  str  = "models/ensemble_scaler.joblib"
     meta_path:    str  = "models/ensemble_meta.json"
     patches_dir:  str  = "data/datasets/patches"
-    parcelas_csv: str  = "data/raw/parcels/parcelas.csv"
-    norm_path:    str  = "data/datasets/normalizer_stats.json"
+    parcelas_csv: str  = "notebooks/processed/parcelas.csv"
+    norm_path:    str  = "models/ensemble_meta.json"
 
     # ── CDSE (Copernicus) — para futura integración real-time ───
     cdse_user:     str = ""
