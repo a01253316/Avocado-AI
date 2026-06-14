@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import warnings
 
 import numpy as np
 
@@ -59,6 +60,38 @@ def label_window(window: np.ndarray, t_mod: float, t_sev: float) -> int:
     if m < t_mod:
         return 1
     return 0
+
+
+def build_ndmi_mask(
+    patch_data: np.ndarray,
+    t_mod: float,
+    t_sev: float,
+    window_size: int = WINDOW_SIZE,
+) -> np.ndarray:
+    """
+    Clasifica cada pixel del patch con NDMI promedio de la ventana reciente.
+
+    Devuelve una mascara (H, W):
+      0 = sin estres
+      1 = estres moderado
+      2 = estres severo
+     -1 = sin dato
+    """
+    if patch_data.ndim != 4:
+        raise ValueError("patch_data debe tener forma (T, C, H, W)")
+    if patch_data.shape[0] < window_size:
+        raise ValueError(f"Serie muy corta: {patch_data.shape[0]} < {window_size}")
+    if patch_data.shape[1] <= NDMI_CH:
+        raise ValueError("patch_data no contiene el canal NDMI")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        ndmi = np.nanmean(patch_data[-window_size:, NDMI_CH, :, :], axis=0)
+    mask = np.zeros(ndmi.shape, dtype=np.int8)
+    mask[ndmi < t_mod] = 1
+    mask[ndmi < t_sev] = 2
+    mask[~np.isfinite(ndmi)] = -1
+    return mask
 
 
 def patch_to_timeseries(npz_path: pathlib.Path) -> np.ndarray:

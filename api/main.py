@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field, field_validator
 from .config import Settings, get_settings
 from .features import (
     CHANNEL_NAMES,
+    WINDOW_SIZE,
+    build_ndmi_mask,
     extract_last_window,
     extract_trend_windows,
     load_thresholds,
@@ -79,6 +81,16 @@ class AnalyzeRequest(BaseModel):
 class ParcelRequest(BaseModel):
     parcel_id: str
     skip_llm:  bool = False
+
+
+class Sam2MaskResponse(BaseModel):
+    parcel_id: str
+    width: int
+    height: int
+    classes: list[list[int]]
+    source: str
+    window_size: int
+    latest_date: Optional[str] = None
 
 
 # ── Dependencias ─────────────────────────────────────────────────────────────
@@ -290,6 +302,49 @@ def analyze_parcel(
             t_mod=t_mod,
             t_sev=t_sev,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/sam2/mask/{parcel_id}", response_model=Sam2MaskResponse, tags=["Segmentacion"])
+def sam2_mask(
+    parcel_id: str,
+    settings: Settings = Depends(get_settings),
+    catalog: LocalCatalog = Depends(get_catalog),
+    thresholds: tuple = Depends(get_thresholds),
+):
+    """Mascara pixel a pixel basada en NDMI para la vista SAM2 preview."""
+    row = catalog._df[catalog._df["parcel_id"] == parcel_id]
+    if row.empty:
+        raise HTTPException(status_code=404, detail=f"Parcela '{parcel_id}' no encontrada")
+
+    npz_path = settings.abs(settings.patches_dir) / f"{parcel_id}.npz"
+    if not npz_path.exists():
+        raise HTTPException(status_code=404, detail=f"No se encontro el parche .npz para {parcel_id}")
+
+    t_mod, t_sev = thresholds
+    try:
+        npz = np.load(npz_path, allow_pickle=True)
+        data = npz["data"].astype(np.float32)
+        if data.shape[0] < WINDOW_SIZE:
+            raise ValueError(f"Serie muy corta: {data.shape[0]} < {WINDOW_SIZE}")
+
+        mask = build_ndmi_mask(data, t_mod, t_sev)
+
+        latest_date = None
+        if "dates" in npz and len(npz["dates"]):
+            latest_date = str(npz["dates"][-1])
+
+        height, width = mask.shape
+        return {
+            "parcel_id": parcel_id,
+            "width": int(width),
+            "height": int(height),
+            "classes": mask.tolist(),
+            "source": "ndmi_window_preview",
+            "window_size": WINDOW_SIZE,
+            "latest_date": latest_date,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -39,7 +39,7 @@
     </div>
 
     <div class="header-actions">
-      <button class="btn btn-outline" id="btn-scan" title="Analizar primeras 30 parcelas sin reporte LLM">
+      <button class="btn btn-outline" id="btn-scan" title="Analizar parcelas visibles sin reporte LLM">
         ⚡ Escanear mapa
       </button>
       <button class="btn btn-outline" id="btn-filter-all" title="Mostrar todas">Todas</button>
@@ -62,6 +62,7 @@
 
       <div class="tabs">
         <button class="tab active" data-tab="parcel">📍 Diagnóstico</button>
+        <button class="tab" data-tab="sam2">SAM2</button>
         <button class="tab" data-tab="new">➕ Nueva ubicación</button>
       </div>
 
@@ -152,6 +153,79 @@
             <div class="loading-dots"><span></span><span></span><span></span></div>
           </div>
 
+        </div>
+      </div>
+
+      <div class="tab-content hidden" id="tab-sam2">
+        <div class="sam2-panel">
+          <div class="sam2-header">
+            <div>
+              <h2 class="sam2-title">Segmentacion SAM2</h2>
+              <p class="sam2-meta" id="sam2-meta">Preview ML</p>
+            </div>
+            <div class="sam2-actions">
+              <button type="button" class="btn btn-primary btn-compact" id="btn-sam2-scan-all">
+                Analizar todo
+              </button>
+              <button type="button" class="btn btn-primary btn-compact" id="btn-sam2-refresh">
+                Actualizar
+              </button>
+            </div>
+          </div>
+
+          <div class="sam2-status" id="sam2-status">
+            Capa lista
+          </div>
+
+          <div class="section-label">Visibilidad</div>
+          <div class="sam2-toggles">
+            <label class="sam2-toggle s0">
+              <input type="checkbox" data-sam2-filter="0" checked />
+              <span>Sin estres</span>
+            </label>
+            <label class="sam2-toggle s1">
+              <input type="checkbox" data-sam2-filter="1" checked />
+              <span>Moderado</span>
+            </label>
+            <label class="sam2-toggle s2">
+              <input type="checkbox" data-sam2-filter="2" checked />
+              <span>Severo</span>
+            </label>
+            <label class="sam2-toggle pending">
+              <input type="checkbox" data-sam2-filter="pending" checked />
+              <span>Sin mascara</span>
+            </label>
+          </div>
+
+          <div class="sam2-grid">
+            <div class="sam2-metric">
+              <span class="sam2-value" id="sam2-total">0</span>
+              <span class="sam2-label">Mascaras</span>
+            </div>
+            <div class="sam2-metric">
+              <span class="sam2-value" id="sam2-coverage">0%</span>
+              <span class="sam2-label">Cobertura</span>
+            </div>
+            <div class="sam2-metric s0">
+              <span class="sam2-value" id="sam2-green">0</span>
+              <span class="sam2-label">Sin estres</span>
+            </div>
+            <div class="sam2-metric s1">
+              <span class="sam2-value" id="sam2-yellow">0</span>
+              <span class="sam2-label">Moderado</span>
+            </div>
+            <div class="sam2-metric s2">
+              <span class="sam2-value" id="sam2-red">0</span>
+              <span class="sam2-label">Severo</span>
+            </div>
+          </div>
+
+          <div class="section-label">Parcelas activas</div>
+          <div class="sam2-list" id="sam2-list"></div>
+
+          <div class="sam2-note">
+            Vista preliminar basada en el clasificador entrenado. La integracion SAM2 real queda preparada como siguiente etapa.
+          </div>
         </div>
       </div>
 
