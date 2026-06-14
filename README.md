@@ -66,14 +66,6 @@ Instala dependencias del backend:
 python -m pip install -r requirements-api.txt
 ```
 
-Verifica versiones:
-
-```powershell
-python --version
-python -c "import sklearn; print(sklearn.__version__)"
-python -c "import xgboost; print(xgboost.__version__)"
-```
-
 ## Configurar Ollama / OpenLLaMA
 
 Este proyecto usa Ollama como servidor local de LLM. No necesita API key para el reporte agronomico.
