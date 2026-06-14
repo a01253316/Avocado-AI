@@ -273,14 +273,14 @@ class TestDatasetWriter:
     def test_patch_npz_has_correct_keys(self, tmp_path):
         ts     = self._make_ts("H1")
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path, allow_pickle=True)
         assert set(npz.files) >= {"data", "dates", "doy"}
 
     def test_patch_data_shape(self, tmp_path):
         ts     = self._make_ts("H1", n=8)
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path)
         assert npz["data"].shape == (8, N_CHANNELS, *SHAPE)
 
@@ -295,7 +295,7 @@ class TestDatasetWriter:
     def test_dates_array_length_matches(self, tmp_path):
         ts     = self._make_ts("H1", n=6)
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path, allow_pickle=True)
         assert len(npz["dates"]) == 6
 

@@ -182,13 +182,13 @@ class TestSITSPixelDataset:
         signals_dir = tmp_path / "signals"
         for pid in ["H1", "H2", "H3"]:
             _write_signal_npz(signals_dir / f"{pid}.npz")
-        ds = SITSPixelDataset(signals_dir)
+        ds = SITSPixelDataset(signals_dir, window_size=T)
         assert len(ds) == 3
 
     def test_item_shape(self, tmp_path):
         signals_dir = tmp_path / "signals"
         _write_signal_npz(signals_dir / "H1.npz")
-        ds   = SITSPixelDataset(signals_dir)
+        ds   = SITSPixelDataset(signals_dir, window_size=T)
         x, y = ds[0]
         assert x.shape == (T, C)
         assert y.shape == (1,)
@@ -196,14 +196,14 @@ class TestSITSPixelDataset:
     def test_stressed_label_when_ndmi_below_threshold(self, tmp_path):
         signals_dir = tmp_path / "signals"
         _write_signal_npz(signals_dir / "H1.npz", ndmi_val=-0.3)  # bajo → estrés
-        ds   = SITSPixelDataset(signals_dir, ndmi_threshold=-0.1)
+        ds   = SITSPixelDataset(signals_dir, ndmi_threshold=-0.1, window_size=T)
         _, y = ds[0]
         assert y.item() == 1.0
 
     def test_healthy_label_when_ndmi_above_threshold(self, tmp_path):
         signals_dir = tmp_path / "signals"
         _write_signal_npz(signals_dir / "H1.npz", ndmi_val=0.4)   # alto → sano
-        ds   = SITSPixelDataset(signals_dir, ndmi_threshold=-0.1)
+        ds   = SITSPixelDataset(signals_dir, ndmi_threshold=-0.1, window_size=T)
         _, y = ds[0]
         assert y.item() == 0.0
 
@@ -211,7 +211,7 @@ class TestSITSPixelDataset:
         signals_dir = tmp_path / "signals"
         for pid in ["H1", "H2", "H3", "H4"]:
             _write_signal_npz(signals_dir / f"{pid}.npz")
-        ds = SITSPixelDataset(signals_dir, parcel_ids=["H1", "H2"])
+        ds = SITSPixelDataset(signals_dir, parcel_ids=["H1", "H2"], window_size=T)
         assert len(ds) == 2
 
     def test_raises_if_no_npz_found(self, tmp_path):
@@ -226,7 +226,7 @@ class TestSITSPixelDataset:
         np.savez_compressed(path, data=data,
                             dates=np.array(["2023-01-15"]*T, dtype="U10"),
                             doy=np.ones(T, dtype=np.int16))
-        ds   = SITSPixelDataset(signals_dir)
+        ds   = SITSPixelDataset(signals_dir, window_size=T)
         x, _ = ds[0]
         assert not torch.isnan(x).any()
 
@@ -290,7 +290,7 @@ class TestDataLoaderIntegration:
             _write_signal_npz(signals_dir / f"{pid}.npz")
 
         from torch.utils.data import DataLoader
-        ds     = SITSPixelDataset(signals_dir)
+        ds     = SITSPixelDataset(signals_dir, window_size=T)
         loader = DataLoader(ds, batch_size=3, shuffle=True)
         model  = PixelCNN(n_timesteps=T, n_channels=C)
         model.eval()
