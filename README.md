@@ -11,7 +11,7 @@ El sistema permite:
 3. Extraer indices espectrales y features de la ventana mas reciente.
 4. Predecir estres hidrico con el modelo E3 Stacking.
 5. Generar un reporte agronomico usando Ollama/OpenLLaMA u otro modelo local.
-6. Visualizar todo en un dashboard servido por FastAPI.
+6. Visualizar diagnosticos, tendencias y segmentacion pixelada en un dashboard servido por FastAPI.
 
 ## Stack
 
@@ -50,8 +50,6 @@ models/
 ```
 
 ## Preparar entorno
-
-El modelo actual fue guardado con una version nueva de scikit-learn, asi que usa Python 3.11+.
 
 Conda recomendado:
 
@@ -128,6 +126,23 @@ Swagger/API docs:
 http://127.0.0.1:8000/docs
 ```
 
+## Funcionamiento del dashboard
+
+El dashboard tiene tres vistas principales:
+
+- `Diagnostico`: muestra el resultado de una parcela, indices espectrales, tendencia NDMI, probabilidades y reporte agronomico.
+- `SAM2`: muestra una capa raster pixel por pixel sobre el mapa. Esta version usa el NDMI de los patches Sentinel-2 como preview de segmentacion; no es fine-tuning SAM2 real todavia.
+- `Nueva ubicacion`: permite analizar coordenadas y, opcionalmente, una imagen de campo.
+
+El boton `Escanear mapa` analiza las parcelas pendientes que esten visibles en la pantalla actual. El alcance depende del zoom y del area visible del mapa; acercate para analizar menos parcelas o alejate para cubrir mas.
+
+En la pestana `SAM2`:
+
+- `Analizar todo` genera mascaras pixeladas para las parcelas cargadas.
+- Los filtros `Sin estres`, `Moderado`, `Severo` y `Sin mascara` solo cambian la visibilidad en el mapa.
+- La lista `Parcelas activas` permite centrar el mapa en una parcela sin salir de la pestana.
+- Las mascaras se calculan con `data/datasets/patches/<parcel_id>.npz` y `data/datasets/normalizer_stats.json`.
+
 ## Pipeline completo
 
 Para generar el dataset desde cero:
@@ -167,6 +182,7 @@ python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 | GET | `/parcels` | Lista parcelas |
 | POST | `/analyze` | Analiza coordenadas GPS |
 | POST | `/analyze/parcel` | Analiza una parcela por ID |
+| GET | `/sam2/mask/{parcel_id}` | Devuelve mascara pixelada por parcela |
 | GET | `/ui` | Dashboard |
 | GET | `/docs` | Swagger UI |
 
@@ -207,15 +223,6 @@ make extract-parcels
 make download-sentinel2
 make compute-indices
 make build-dataset
-```
-
-### `LogisticRegression object has no attribute multi_class`
-
-Es incompatibilidad de version de scikit-learn. Usa Python 3.12 y reinstala:
-
-```powershell
-conda activate avocado-ai
-python -m pip install -r requirements-api.txt
 ```
 
 ### `No se pudo conectar a Ollama`

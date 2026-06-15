@@ -12,14 +12,6 @@ conda activate avocado-ai
 python -m pip install -r requirements-api.txt
 ```
 
-Verifica:
-
-```powershell
-python --version
-python -c "import sklearn; print(sklearn.__version__)"
-python -c "import xgboost; print(xgboost.__version__)"
-```
-
 ## 2. Configurar modelo local
 
 Ollama debe estar instalado y corriendo. Descarga el modelo local:
@@ -93,7 +85,20 @@ Abre:
 http://127.0.0.1:8000/ui
 ```
 
-## 6. Cuando usar Makefile para dev
+## 6. Usar el mapa y SAM2
+
+En el dashboard:
+
+- `Escanear mapa` analiza las parcelas pendientes dentro de la pantalla actual. Usa el zoom para controlar cuantas parcelas entran en el escaneo.
+- `Diagnostico` muestra el resultado agronomico de una parcela.
+- `SAM2` muestra una vista pixel por pixel basada en los patches Sentinel-2.
+- `Analizar todo` dentro de `SAM2` genera las mascaras raster para las parcelas cargadas.
+- Los filtros de SAM2 ocultan o muestran grupos de pixeles (`Sin estres`, `Moderado`, `Severo`, `Sin mascara`) sin recalcular el modelo.
+- La lista `Parcelas activas` centra el mapa en la parcela seleccionada sin cambiar a la pestana de diagnostico.
+
+La version actual de SAM2 es una preview basada en NDMI por pixel. El fine-tuning de SAM2 real queda como siguiente etapa.
+
+## 7. Cuando usar Makefile para dev
 
 Tambien puedes usar:
 

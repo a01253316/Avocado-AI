@@ -1,11 +1,12 @@
 """
-Extracción de características SITS desde parches .npz.
-Misma lógica que el notebook Avance5 para consistencia con el modelo entrenado.
+Extraccion de caracteristicas SITS desde parches .npz.
+Misma logica que el notebook Avance5 para consistencia con el modelo entrenado.
 """
 from __future__ import annotations
 
 import json
 import pathlib
+import warnings
 
 import numpy as np
 
@@ -32,7 +33,7 @@ def load_thresholds(norm_path: pathlib.Path) -> tuple[float, float]:
 
 def extract_window_features(window: np.ndarray) -> np.ndarray:
     """
-    Devuelve 35 características estadísticas de una ventana (W, C):
+    Devuelve 35 caracteristicas estadisticas de una ventana (W, C):
     [canal0_mean, canal0_std, ..., canal4_trend]
     """
     feats = []
@@ -61,6 +62,38 @@ def label_window(window: np.ndarray, t_mod: float, t_sev: float) -> int:
     return 0
 
 
+def build_ndmi_mask(
+    patch_data: np.ndarray,
+    t_mod: float,
+    t_sev: float,
+    window_size: int = WINDOW_SIZE,
+) -> np.ndarray:
+    """
+    Clasifica cada pixel del patch con NDMI promedio de la ventana reciente.
+
+    Devuelve una mascara (H, W):
+      0 = sin estres
+      1 = estres moderado
+      2 = estres severo
+     -1 = sin dato
+    """
+    if patch_data.ndim != 4:
+        raise ValueError("patch_data debe tener forma (T, C, H, W)")
+    if patch_data.shape[0] < window_size:
+        raise ValueError(f"Serie muy corta: {patch_data.shape[0]} < {window_size}")
+    if patch_data.shape[1] <= NDMI_CH:
+        raise ValueError("patch_data no contiene el canal NDMI")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        ndmi = np.nanmean(patch_data[-window_size:, NDMI_CH, :, :], axis=0)
+    mask = np.zeros(ndmi.shape, dtype=np.int8)
+    mask[ndmi < t_mod] = 1
+    mask[ndmi < t_sev] = 2
+    mask[~np.isfinite(ndmi)] = -1
+    return mask
+
+
 def patch_to_timeseries(npz_path: pathlib.Path) -> np.ndarray:
     """Carga un .npz y devuelve la serie temporal espacialmente promediada (T, C)."""
     p    = np.load(npz_path)
@@ -75,17 +108,17 @@ def extract_last_window(
     window_size: int = WINDOW_SIZE,
 ) -> dict:
     """
-    Extrae la ventana temporal más reciente de la serie (T, C) y devuelve
-    features + label + índices espectrales crudos para el prompt LLM.
+    Extrae la ventana temporal mas reciente de la serie (T, C) y devuelve
+    features + label + indices espectrales crudos para el prompt LLM.
     """
     if len(ts) < window_size:
         raise ValueError(f"Serie muy corta: {len(ts)} < {window_size}")
 
-    win = ts[-window_size:]          # últimas 24 fechas
+    win = ts[-window_size:]          # ultimas 24 fechas
     feats = extract_window_features(win)
     lbl   = label_window(win, t_mod, t_sev)
 
-    # Índices medios en espacio normalizado (para el prompt)
+    # Indices medios en espacio normalizado (para el prompt)
     means = win.mean(axis=0)
     return {
         "features": feats,
@@ -104,8 +137,8 @@ def extract_trend_windows(
     step: int = WINDOW_STEP,
 ) -> list[dict]:
     """
-    Extrae las últimas n_windows ventanas para mostrar tendencia temporal al LLM.
-    Devuelve lista de {label, ndmi_mean, ndvi_mean} de más antigua a más reciente.
+    Extrae las ultimas n_windows ventanas para mostrar tendencia temporal al LLM.
+    Devuelve lista de {label, ndmi_mean, ndvi_mean} de mas antigua a mas reciente.
     """
     T = len(ts)
     starts = list(range(0, T - window_size + 1, step))
