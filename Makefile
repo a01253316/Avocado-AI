@@ -13,6 +13,10 @@ START_DATE  := 2020-01-01
 END_DATE    := $(shell date +%Y-%m-%d)
 BUFFER_M    := 250
 VIT_PRESET  := small   # tiny | small | base
+SAM2_CHECKPOINT ?= models/checkpoints/sam2.1_hiera_tiny.pt
+SAM2_MODEL_CFG  ?= configs/sam2.1/sam2.1_hiera_t.yaml
+SAM2_DEVICE     ?= auto
+SAM2_CHECKPOINT_URL ?= https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt
 
 # ── Parámetros del servidor ──────────────────────────────────
 HOST        := 127.0.0.1
@@ -23,7 +27,7 @@ PORT        := 8000
         setup setup-api setup-all \
         extract-parcels download-sentinel2 \
         compute-indices build-dataset \
-        train-ensemble train-cnn train-vit \
+        train-ensemble train-cnn train-vit prepare-sam2 download-sam2-checkpoint train-sam2 \
         dev serve \
         notebook \
         test lint \
@@ -55,6 +59,9 @@ help:
 	@echo "  make train-ensemble Entrena E3 Stacking (modelo principal ★)"
 	@echo "  make train-cnn      Entrena CNN baseline"
 	@echo "  make train-vit      Entrena ViT for SITS (preset=$(VIT_PRESET))"
+	@echo "  make prepare-sam2   Exporta dataset SAM2 desde patches"
+	@echo "  make download-sam2-checkpoint Descarga checkpoint SAM2.1 tiny"
+	@echo "  make train-sam2     Fine-tuning SAM2 con checkpoint externo"
 	@echo ""
 	@echo "  SERVIDOR / DASHBOARD"
 	@echo "  ────────────────────"
@@ -152,6 +159,25 @@ train-vit:
 		--output-dir  models/ \
 		--experiment  avocado-stress-vit
 	@echo "✅ Modelo guardado en models/best_sits_vit.pt"
+
+prepare-sam2:
+	$(PYTHON) src/models/sam2/prepare_sam2_dataset.py \
+		--patches-dir data/datasets/patches \
+		--norm-path data/datasets/normalizer_stats.json \
+		--output-dir data/sam2
+	@echo "SAM2 dataset exported to data/sam2"
+
+download-sam2-checkpoint:
+	$(PYTHON) -c "from pathlib import Path; import urllib.request; p=Path('$(SAM2_CHECKPOINT)'); p.parent.mkdir(parents=True, exist_ok=True); print('Downloading $(SAM2_CHECKPOINT_URL) ->', p); urllib.request.urlretrieve('$(SAM2_CHECKPOINT_URL)', p)"
+
+train-sam2:
+	$(PYTHON) src/models/sam2/train_sam2_finetune.py \
+		--manifest data/sam2/manifest.csv \
+		--checkpoint $(SAM2_CHECKPOINT) \
+		--model-cfg $(SAM2_MODEL_CFG) \
+		--device $(SAM2_DEVICE) \
+		--output models/sam2_avocado_finetuned.pt
+	@echo "SAM2 fine-tuned weights saved in models/sam2_avocado_finetuned.pt"
 
 # ─────────────────────────────────────────────────────────────
 # SERVIDOR / DASHBOARD

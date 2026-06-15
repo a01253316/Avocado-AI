@@ -5,6 +5,8 @@
 const API       = '';   // same origin - FastAPI at /
 const MAP_CTR   = [20.5, -103.5];
 const MAP_ZOOM  = 9;
+const SAM2_BOUNDS_SCALE = 0.58;
+const SAM2_ADJUSTED_BOUNDS_SCALE = 0.38;
 
 async function readJsonOrThrow(res) {
   const text = await res.text();
@@ -24,6 +26,7 @@ async function readJsonOrThrow(res) {
 
 const COLOR = { 0: '#388E3C', 1: '#F9A825', 2: '#C62828', null: '#9E9E9E' };
 const LABEL = { 0: ' Sin estres', 1: ' Estres moderado', 2: ' Estres severo' };
+const SHORT_LABEL = { 0: 'sin estres', 1: 'moderado', 2: 'severo' };
 
 /* -- State ---------------------------------------------------- */
 let map, trendChart, sam2Layer;
@@ -31,6 +34,10 @@ let markers  = {};   // parcel_id -> Leaflet marker
 let results  = {};   // parcel_id -> analysis result
 let sam2Masks = {};  // parcel_id -> pixel mask result
 let sam2Visible = { 0: true, 1: true, 2: true, pending: true };
+let sam2AnalysisVisible = { 0: true, 1: true, 2: true };
+let sam2MarkerVisible = { 0: true, 1: true, 2: true, pending: true };
+let sam2HiddenParcels = new Set();
+let sam2AdjustedOverlap = false;
 let parcels  = [];   // all parcels from /parcels
 let photoB64 = null;
 let photoMime = 'image/jpeg';
@@ -124,6 +131,11 @@ async function loadParcels() {
 }
 
 function onMarkerClick(p) {
+  if (activeTab() === 'sam2') {
+    toggleSam2Parcel(p);
+    return;
+  }
+
   switchTab('parcel');
 
   // Use cached result (with LLM report) if available
@@ -155,8 +167,12 @@ async function analyzeParcel(parcelId, skipLlm = false) {
     results[parcelId] = data;
     setMarkerClass(parcelId, data.stress.class);
     updateStats();
-    applyFilter();
-    if (activeTab() === 'sam2') renderSam2View();
+    if (activeTab() === 'sam2') {
+      refreshSam2MarkerVisibility();
+      renderSam2View();
+    } else {
+      applyFilter();
+    }
     return data;
   } catch (e) {
     if (!skipLlm) showToast(`Error al analizar ${parcelId}: ${e.message}`, 'error');
@@ -425,9 +441,12 @@ function switchTab(name) {
     c.classList.toggle('hidden', c.id !== `tab-${name}`)
   );
   if (name === 'sam2') {
+    refreshSam2MarkerVisibility();
     renderSam2View();
   } else if (sam2Layer) {
+    resetSam2MarkerState();
     sam2Layer.clearLayers();
+    applyFilter();
   }
 }
 
@@ -438,13 +457,41 @@ function activeTab() {
 function initSam2() {
   const refreshBtn = document.getElementById('btn-sam2-refresh');
   const scanBtn = document.getElementById('btn-sam2-scan-all');
+  const overlapBtn = document.getElementById('btn-sam2-adjust-overlap');
   if (refreshBtn) refreshBtn.addEventListener('click', renderSam2View);
   if (scanBtn) scanBtn.addEventListener('click', scanSam2All);
+  if (overlapBtn) {
+    overlapBtn.addEventListener('click', () => {
+      sam2AdjustedOverlap = !sam2AdjustedOverlap;
+      updateSam2OverlapButton();
+      renderSam2View();
+    });
+    updateSam2OverlapButton();
+  }
+  if (map) {
+    map.on('moveend zoomend', () => {
+      if (activeTab() === 'sam2') renderSam2View();
+    });
+  }
   document.querySelectorAll('[data-sam2-filter]').forEach(input => {
     input.addEventListener('change', () => {
       const key = input.dataset.sam2Filter;
       sam2Visible[key] = input.checked;
       renderSam2View();
+    });
+  });
+  document.querySelectorAll('[data-sam2-analysis-filter]').forEach(input => {
+    input.addEventListener('change', () => {
+      const key = input.dataset.sam2AnalysisFilter;
+      sam2AnalysisVisible[key] = input.checked;
+      renderSam2View();
+    });
+  });
+  document.querySelectorAll('[data-sam2-marker-filter]').forEach(input => {
+    input.addEventListener('change', () => {
+      const key = input.dataset.sam2MarkerFilter;
+      sam2MarkerVisible[key] = input.checked;
+      refreshSam2MarkerVisibility();
     });
   });
 }
@@ -455,8 +502,10 @@ function renderSam2View() {
   sam2Layer.clearLayers();
 
   const analyzed = Object.values(results).filter(Boolean);
-  const masks = Object.values(sam2Masks);
+  const totalMaskCount = Object.keys(sam2Masks).length;
+  let visibleMaskCount = 0;
   const counts = { 0: 0, 1: 0, 2: 0 };
+  const compositeItems = [];
 
   parcels.forEach(parcel => {
     const data = results[parcel.parcel_id];
@@ -464,17 +513,21 @@ function renderSam2View() {
     const cls = data?.stress?.class ?? null;
     const color = COLOR[cls];
 
+    if (sam2HiddenParcels.has(parcel.parcel_id)) return;
+
     if (mask) {
-      addMaskCounts(mask, counts);
-      if (!maskHasVisiblePixels(mask)) return;
-      L.imageOverlay(maskToDataUrl(mask), parcelCellBounds(parcel), {
-        opacity: 0.72,
-        interactive: true,
-      }).addTo(sam2Layer).on('click', () => focusSam2Parcel(parcel));
+      if (!sam2ParcelClassVisible(cls)) return;
+
+      visibleMaskCount++;
+      addMaskCounts(mask, counts, cls);
+      if (maskHasVisiblePixels(mask, cls)) {
+        compositeItems.push({ parcel, mask, parcelClass: cls });
+      }
       return;
     }
 
     if (!sam2Visible.pending) return;
+    if (!sam2ParcelClassVisible(cls)) return;
 
     const cell = L.rectangle(parcelCellBounds(parcel), {
       color,
@@ -489,25 +542,29 @@ function renderSam2View() {
       direction: 'top',
       offset: [0, -4],
     });
-    cell.on('click', () => focusSam2Parcel(parcel));
+    cell.on('click', () => toggleSam2Parcel(parcel));
   });
 
+  renderSam2Composite(compositeItems);
+
   const coverage = parcels.length
-    ? Math.round((masks.length / parcels.length) * 100)
+    ? Math.round((visibleMaskCount / parcels.length) * 100)
     : 0;
 
-  setText('sam2-total', masks.length);
+  setText('sam2-total', visibleMaskCount);
   setText('sam2-coverage', `${coverage}%`);
   setText('sam2-green', compactNumber(counts[0]));
   setText('sam2-yellow', compactNumber(counts[1]));
   setText('sam2-red', compactNumber(counts[2]));
-  setText('sam2-meta', `${masks.length} mascaras pixel`);
+  setText('sam2-meta', `${visibleMaskCount} mascaras pixel visibles${sam2AdjustedOverlap ? ' - overlap ajustado' : ''}`);
 
   const status = document.getElementById('sam2-status');
   if (status) {
-    status.textContent = masks.length
+    status.textContent = visibleMaskCount
       ? 'Raster pixel activo sobre el mapa'
-      : 'Genera mascaras para activar el raster';
+      : totalMaskCount
+        ? 'No hay mascaras visibles con los filtros actuales'
+        : 'Genera mascaras para activar el raster';
   }
 
   renderSam2List();
@@ -524,12 +581,17 @@ async function scanSam2All() {
   overlay.className = 'scan-overlay';
   document.querySelector('.map-container').appendChild(overlay);
 
-  const pending = parcels.filter(p => !sam2Masks[p.parcel_id]);
+  const pending = parcels.filter(p => !sam2Masks[p.parcel_id] || !results[p.parcel_id]);
   let done = 0;
 
   for (const p of pending) {
-    overlay.textContent = `SAM2 pixeles ${done + 1}/${pending.length} - ${p.parcel_id}`;
-    await loadSam2Mask(p.parcel_id);
+    overlay.textContent = `SAM2 analisis ${done + 1}/${pending.length} - ${p.parcel_id}`;
+    if (!results[p.parcel_id]) {
+      await analyzeParcel(p.parcel_id, true);
+    }
+    if (!sam2Masks[p.parcel_id]) {
+      await loadSam2Mask(p.parcel_id);
+    }
     done++;
     if (done % 5 === 0) renderSam2View();
     await sleep(40);
@@ -539,13 +601,65 @@ async function scanSam2All() {
   if (btn) btn.disabled = false;
   scanning = false;
   renderSam2View();
-  showToast(`SAM2 pixel actualizado: ${done} mascaras generadas`, 'success');
+  showToast(`SAM2 actualizado: ${done} parcelas listas`, 'success');
 }
 
 function focusSam2Parcel(parcel) {
   map.flyTo([parcel.latitude, parcel.longitude], 14, { duration: 0.8 });
   const marker = markers[parcel.parcel_id];
   if (marker) marker.openTooltip();
+}
+
+function openNewLocationFromParcel(parcel) {
+  setNewLocationInputs(parcel.latitude, parcel.longitude);
+  switchTab('new');
+  map.flyTo([parcel.latitude, parcel.longitude], 14, { duration: 0.8 });
+  showToast(`Coordenadas cargadas: ${parcel.parcel_id}`, 'success');
+}
+
+function setNewLocationInputs(lat, lon) {
+  const latInput = document.getElementById('inp-lat');
+  const lonInput = document.getElementById('inp-lon');
+  if (latInput) latInput.value = Number(lat).toFixed(6);
+  if (lonInput) lonInput.value = Number(lon).toFixed(6);
+}
+
+function toggleSam2Parcel(parcel) {
+  if (sam2HiddenParcels.has(parcel.parcel_id)) {
+    sam2HiddenParcels.delete(parcel.parcel_id);
+  } else {
+    sam2HiddenParcels.add(parcel.parcel_id);
+  }
+  refreshSam2MarkerVisibility();
+  renderSam2View();
+}
+
+function setSam2MarkerOpacity(parcelId, opacity) {
+  const marker = markers[parcelId];
+  if (marker && typeof marker.setOpacity === 'function') {
+    marker.setOpacity(opacity);
+  }
+}
+
+function refreshSam2MarkerVisibility() {
+  Object.entries(markers).forEach(([parcelId, marker]) => {
+    if (sam2MarkerAllowed(parcelId)) {
+      if (!map.hasLayer(marker)) map.addLayer(marker);
+      setSam2MarkerOpacity(parcelId, sam2HiddenParcels.has(parcelId) ? 0.35 : 1);
+    } else if (map.hasLayer(marker)) {
+      map.removeLayer(marker);
+    }
+  });
+}
+
+function resetSam2MarkerState() {
+  Object.keys(markers).forEach(parcelId => setSam2MarkerOpacity(parcelId, 1));
+}
+
+function sam2MarkerAllowed(parcelId) {
+  const cls = results[parcelId]?.stress?.class ?? null;
+  const key = cls === null ? 'pending' : cls;
+  return sam2MarkerVisible[key] !== false;
 }
 
 async function loadSam2Mask(parcelId) {
@@ -567,7 +681,11 @@ function renderSam2List() {
 
   const items = parcels.filter(p => {
     const mask = sam2Masks[p.parcel_id];
-    return mask && maskHasVisiblePixels(mask);
+    const cls = parcelStressClass(p);
+    return !sam2HiddenParcels.has(p.parcel_id)
+      && mask
+      && sam2ParcelClassVisible(cls)
+      && maskHasVisiblePixels(mask, cls);
   });
   if (!items.length) {
     list.innerHTML = '<div class="sam2-empty">Sin mascaras activas</div>';
@@ -576,12 +694,12 @@ function renderSam2List() {
 
   list.innerHTML = items
     .map(parcel => {
-      const summary = summarizeMask(sam2Masks[parcel.parcel_id]);
+      const summary = summarizeMask(sam2Masks[parcel.parcel_id], parcelStressClass(parcel));
       const cls = summary.majority;
       return `
         <button type="button" class="sam2-row s${cls}" data-parcel="${parcel.parcel_id}">
           <span>${parcel.parcel_id}</span>
-          <strong>${summary.severePct}% severo</strong>
+          <strong>${summary.majorityPct}% ${SHORT_LABEL[cls]}</strong>
         </button>
       `;
     })
@@ -590,35 +708,60 @@ function renderSam2List() {
   list.querySelectorAll('.sam2-row').forEach(row => {
     row.addEventListener('click', () => {
       const parcel = parcels.find(p => p.parcel_id === row.dataset.parcel);
-      if (parcel) focusSam2Parcel(parcel);
+      if (parcel) toggleSam2Parcel(parcel);
     });
   });
 }
 
-function addMaskCounts(mask, counts) {
+function parcelStressClass(parcel) {
+  return results[parcel.parcel_id]?.stress?.class ?? null;
+}
+
+function sam2ParcelClassVisible(parcelClass) {
+  if (parcelClass === null) return true;
+  return sam2AnalysisVisible[parcelClass] !== false;
+}
+
+function calibratedMaskClass(rawClass, parcelClass) {
+  if (![0, 1, 2].includes(rawClass)) return rawClass;
+
+  if (parcelClass === 0) {
+    return rawClass === 2 ? 1 : 0;
+  }
+
+  if (parcelClass === 1) {
+    return rawClass === 0 ? 0 : 1;
+  }
+
+  return rawClass;
+}
+
+function addMaskCounts(mask, counts, parcelClass = null) {
   for (let y = 0; y < mask.height; y++) {
     for (let x = 0; x < mask.width; x++) {
-      const cls = mask.classes[y][x];
+      const cls = calibratedMaskClass(mask.classes[y][x], parcelClass);
       if ([0, 1, 2].includes(cls)) counts[cls]++;
     }
   }
 }
 
-function summarizeMask(mask) {
+function summarizeMask(mask, parcelClass = null) {
   const counts = { 0: 0, 1: 0, 2: 0 };
-  addMaskCounts(mask, counts);
+  addMaskCounts(mask, counts, parcelClass);
   const total = counts[0] + counts[1] + counts[2] || 1;
   const majority = [0, 1, 2].sort((a, b) => counts[b] - counts[a])[0];
   return {
     majority,
+    majorityPct: Math.round((counts[majority] / total) * 100),
     severePct: Math.round((counts[2] / total) * 100),
   };
 }
 
-function maskHasVisiblePixels(mask) {
+function maskHasVisiblePixels(mask, parcelClass = null) {
   for (let y = 0; y < mask.height; y++) {
     for (let x = 0; x < mask.width; x++) {
-      if (sam2Visible[mask.classes[y][x]]) return true;
+      const cls = calibratedMaskClass(mask.classes[y][x], parcelClass);
+      if (sam2Visible[cls]) return true;
     }
   }
   return false;
@@ -635,12 +778,196 @@ function parcelCellBounds(parcel) {
   ];
 }
 
+function sam2OverlayBounds(parcel, mask) {
+  const bounds = Array.isArray(mask.bounds) && mask.bounds.length === 2
+    ? mask.bounds
+    : parcelCellBounds(parcel);
+  return compactSam2Bounds(bounds, parcel, sam2BoundsScale());
+}
+
+function sam2BoundsScale() {
+  return sam2AdjustedOverlap ? SAM2_ADJUSTED_BOUNDS_SCALE : SAM2_BOUNDS_SCALE;
+}
+
+function compactSam2Bounds(bounds, parcel, scale) {
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  if (![south, west, north, east].every(Number.isFinite)) return bounds;
+
+  const centerLat = parcel.latitude >= south && parcel.latitude <= north
+    ? parcel.latitude
+    : (south + north) / 2;
+  const centerLon = parcel.longitude >= west && parcel.longitude <= east
+    ? parcel.longitude
+    : (west + east) / 2;
+  const halfLat = ((north - south) * scale) / 2;
+  const halfLon = ((east - west) * scale) / 2;
+
+  return [
+    [centerLat - halfLat, centerLon - halfLon],
+    [centerLat + halfLat, centerLon + halfLon],
+  ];
+}
+
 function sam2Tooltip(parcel, data) {
   if (!data) return `<b>${parcel.parcel_id}</b><br>Sin analizar`;
   return `<b>${parcel.parcel_id}</b><br>${data.stress.label}`;
 }
 
-function maskToDataUrl(mask) {
+function renderSam2Composite(items) {
+  if (!items.length) return;
+
+  const size = map.getSize();
+  const width = Math.max(1, Math.round(size.x));
+  const height = Math.max(1, Math.round(size.y));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  const finalClasses = new Int8Array(width * height);
+  finalClasses.fill(-1);
+
+  if (sam2AdjustedOverlap) {
+    resolveAdjustedComposite(items, finalClasses, width, height);
+  } else {
+    items.forEach(({ parcel, mask, parcelClass }) => {
+      resolveMaskIntoComposite(mask, sam2OverlayBounds(parcel, mask), finalClasses, width, height, parcelClass);
+    });
+  }
+
+  const image = renderCompositeImage(ctx, finalClasses, width, height);
+  ctx.putImageData(image, 0, 0);
+  L.imageOverlay(canvas.toDataURL('image/png'), map.getBounds(), {
+    opacity: 0.78,
+    interactive: false,
+    zIndex: 430,
+  }).addTo(sam2Layer);
+}
+
+function updateSam2OverlapButton() {
+  const btn = document.getElementById('btn-sam2-adjust-overlap');
+  if (!btn) return;
+  btn.classList.toggle('active', sam2AdjustedOverlap);
+  btn.textContent = sam2AdjustedOverlap ? 'Overlap ajustado' : 'Ajustar overlap';
+}
+
+function resolveAdjustedComposite(items, finalClasses, width, height) {
+  const votes = new Uint16Array(width * height * 3);
+  items.forEach(({ parcel, mask, parcelClass }) => {
+    addMaskVotes(mask, sam2OverlayBounds(parcel, mask), votes, width, height, parcelClass);
+  });
+
+  for (let idx = 0; idx < finalClasses.length; idx++) {
+    const offset = idx * 3;
+    const green = votes[offset];
+    const yellow = votes[offset + 1];
+    const red = votes[offset + 2];
+    if (!green && !yellow && !red) continue;
+
+    if (green >= yellow && green >= red) {
+      finalClasses[idx] = 0;
+    } else if (yellow >= red) {
+      finalClasses[idx] = 1;
+    } else {
+      finalClasses[idx] = 2;
+    }
+  }
+}
+
+function addMaskVotes(mask, bounds, votes, width, height, parcelClass = null) {
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  const topLeft = map.latLngToContainerPoint([north, west]);
+  const bottomRight = map.latLngToContainerPoint([south, east]);
+  const x0 = Math.floor(Math.min(topLeft.x, bottomRight.x));
+  const x1 = Math.ceil(Math.max(topLeft.x, bottomRight.x));
+  const y0 = Math.floor(Math.min(topLeft.y, bottomRight.y));
+  const y1 = Math.ceil(Math.max(topLeft.y, bottomRight.y));
+  if (x1 < 0 || y1 < 0 || x0 >= width || y0 >= height) return;
+
+  const clippedX0 = Math.max(0, x0);
+  const clippedY0 = Math.max(0, y0);
+  const clippedX1 = Math.min(width, x1);
+  const clippedY1 = Math.min(height, y1);
+  const boxW = Math.max(1, x1 - x0);
+  const boxH = Math.max(1, y1 - y0);
+
+  for (let sy = clippedY0; sy < clippedY1; sy++) {
+    const my = Math.min(mask.height - 1, Math.max(0, Math.floor(((sy - y0) / boxH) * mask.height)));
+    for (let sx = clippedX0; sx < clippedX1; sx++) {
+      const mx = Math.min(mask.width - 1, Math.max(0, Math.floor(((sx - x0) / boxW) * mask.width)));
+      const cls = calibratedMaskClass(mask.classes[my][mx], parcelClass);
+      if (![0, 1, 2].includes(cls)) continue;
+
+      votes[(sy * width + sx) * 3 + cls]++;
+    }
+  }
+}
+
+function resolveMaskIntoComposite(mask, bounds, finalClasses, width, height, parcelClass = null) {
+  const south = bounds[0][0];
+  const west = bounds[0][1];
+  const north = bounds[1][0];
+  const east = bounds[1][1];
+  const topLeft = map.latLngToContainerPoint([north, west]);
+  const bottomRight = map.latLngToContainerPoint([south, east]);
+  const x0 = Math.floor(Math.min(topLeft.x, bottomRight.x));
+  const x1 = Math.ceil(Math.max(topLeft.x, bottomRight.x));
+  const y0 = Math.floor(Math.min(topLeft.y, bottomRight.y));
+  const y1 = Math.ceil(Math.max(topLeft.y, bottomRight.y));
+  if (x1 < 0 || y1 < 0 || x0 >= width || y0 >= height) return;
+
+  const clippedX0 = Math.max(0, x0);
+  const clippedY0 = Math.max(0, y0);
+  const clippedX1 = Math.min(width, x1);
+  const clippedY1 = Math.min(height, y1);
+  const boxW = Math.max(1, x1 - x0);
+  const boxH = Math.max(1, y1 - y0);
+
+  for (let sy = clippedY0; sy < clippedY1; sy++) {
+    const my = Math.min(mask.height - 1, Math.max(0, Math.floor(((sy - y0) / boxH) * mask.height)));
+    for (let sx = clippedX0; sx < clippedX1; sx++) {
+      const mx = Math.min(mask.width - 1, Math.max(0, Math.floor(((sx - x0) / boxW) * mask.width)));
+      const cls = calibratedMaskClass(mask.classes[my][mx], parcelClass);
+      if (![0, 1, 2].includes(cls)) continue;
+
+      const idx = sy * width + sx;
+      if (cls < finalClasses[idx]) continue;
+
+      finalClasses[idx] = cls;
+    }
+  }
+}
+
+function renderCompositeImage(ctx, finalClasses, width, height) {
+  const image = ctx.createImageData(width, height);
+  const colors = {
+    0: [56, 142, 60, 135],
+    1: [249, 168, 37, 155],
+    2: [198, 40, 40, 175],
+  };
+
+  for (let idx = 0; idx < finalClasses.length; idx++) {
+    const cls = finalClasses[idx];
+    if (![0, 1, 2].includes(cls) || !sam2Visible[cls]) continue;
+
+    const rgba = colors[cls];
+    const out = idx * 4;
+    image.data[out] = rgba[0];
+    image.data[out + 1] = rgba[1];
+    image.data[out + 2] = rgba[2];
+    image.data[out + 3] = rgba[3];
+  }
+
+  return image;
+}
+
+function maskToDataUrl(mask, onlyClass = null) {
   const canvas = document.createElement('canvas');
   canvas.width = mask.width;
   canvas.height = mask.height;
@@ -657,7 +984,7 @@ function maskToDataUrl(mask) {
     for (let x = 0; x < mask.width; x++) {
       const idx = (y * mask.width + x) * 4;
       const cls = mask.classes[y][x];
-      const rgba = sam2Visible[cls]
+      const rgba = (onlyClass === null || cls === onlyClass) && sam2Visible[cls]
         ? (colors[cls] || [158, 158, 158, 40])
         : [0, 0, 0, 0];
       img.data[idx] = rgba[0];

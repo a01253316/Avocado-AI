@@ -1,0 +1,14 @@
+# Optional dependencies for SAM2 fine-tuning.
+# Install after your normal environment is ready:
+#   python -m pip install -r requirements-sam2.txt
+
+torch>=2.3.0
+torchvision>=0.18.0
+pillow>=10.0.0
+opencv-python>=4.9.0
+tqdm>=4.66.0
+
+# Meta SAM2 is installed from its official repository. If this URL changes,
+# follow the official SAM2 installation instructions and keep checkpoints out
+# of git.
+git+https://github.com/facebookresearch/sam2.git

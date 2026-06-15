@@ -170,6 +170,9 @@
               <button type="button" class="btn btn-primary btn-compact" id="btn-sam2-refresh">
                 Actualizar
               </button>
+              <button type="button" class="btn btn-primary btn-compact" id="btn-sam2-adjust-overlap">
+                Ajustar overlap
+              </button>
             </div>
           </div>
 
@@ -177,7 +180,7 @@
             Capa lista
           </div>
 
-          <div class="section-label">Visibilidad</div>
+          <div class="section-label">Pixeles visibles</div>
           <div class="sam2-toggles">
             <label class="sam2-toggle s0">
               <input type="checkbox" data-sam2-filter="0" checked />
@@ -194,6 +197,42 @@
             <label class="sam2-toggle pending">
               <input type="checkbox" data-sam2-filter="pending" checked />
               <span>Sin mascara</span>
+            </label>
+          </div>
+
+          <div class="section-label">Diagnostico Sentinel</div>
+          <div class="sam2-toggles">
+            <label class="sam2-toggle s0">
+              <input type="checkbox" data-sam2-analysis-filter="0" checked />
+              <span>Sin estres</span>
+            </label>
+            <label class="sam2-toggle s1">
+              <input type="checkbox" data-sam2-analysis-filter="1" checked />
+              <span>Moderado</span>
+            </label>
+            <label class="sam2-toggle s2">
+              <input type="checkbox" data-sam2-analysis-filter="2" checked />
+              <span>Severo</span>
+            </label>
+          </div>
+
+          <div class="section-label">Coordenadas visibles</div>
+          <div class="sam2-toggles">
+            <label class="sam2-toggle s0">
+              <input type="checkbox" data-sam2-marker-filter="0" checked />
+              <span>Sin estres</span>
+            </label>
+            <label class="sam2-toggle s1">
+              <input type="checkbox" data-sam2-marker-filter="1" checked />
+              <span>Moderado</span>
+            </label>
+            <label class="sam2-toggle s2">
+              <input type="checkbox" data-sam2-marker-filter="2" checked />
+              <span>Severo</span>
+            </label>
+            <label class="sam2-toggle pending">
+              <input type="checkbox" data-sam2-marker-filter="pending" checked />
+              <span>Sin analizar</span>
             </label>
           </div>
 

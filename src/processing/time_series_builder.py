@@ -57,6 +57,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 import rasterio
+from rasterio.warp import transform_bounds
 
 logger = logging.getLogger("time_series_builder")
 logging.basicConfig(
@@ -83,6 +84,7 @@ class ParcelTimeSeries:
     dates     : list[str]        = field(default_factory=list)
     doy       : list[int]        = field(default_factory=list)
     patches   : list[np.ndarray] = field(default_factory=list)  # list de (C, H, W)
+    bounds_wgs84: list[list[float]] | None = None  # [[south, west], [north, east]]
 
     @property
     def n_dates(self) -> int:
@@ -122,13 +124,15 @@ class IndexReader:
         ref_shape: tuple[int, int] | None = None
 
         for date_dir in date_dirs:
-            patch, shape = self._load_patch(date_dir, ref_shape)
+            patch, shape, bounds_wgs84 = self._load_patch(date_dir, ref_shape)
             if patch is None:
                 logger.debug("  %s/%s sin datos válidos, skip", parcel_id, date_dir.name)
                 continue
 
             if ref_shape is None:
                 ref_shape = shape
+            if ts.bounds_wgs84 is None and bounds_wgs84 is not None:
+                ts.bounds_wgs84 = bounds_wgs84
 
             ts.dates.append(date_dir.name)
             ts.doy.append(self._date_to_doy(date_dir.name))
@@ -141,9 +145,10 @@ class IndexReader:
         self,
         date_dir: Path,
         ref_shape: tuple[int, int] | None,
-    ) -> tuple[np.ndarray | None, tuple[int, int] | None]:
+    ) -> tuple[np.ndarray | None, tuple[int, int] | None, list[list[float]] | None]:
         channels: list[np.ndarray | None] = []
         shape: tuple[int, int] | None = None
+        bounds_wgs84: list[list[float]] | None = None
 
         for idx in INDICES:
             tif_path = date_dir / f"{idx}.tif"
@@ -160,11 +165,13 @@ class IndexReader:
             with rasterio.open(tif_path) as src:
                 arr   = src.read(1).astype(np.float32)
                 shape = arr.shape
+                if bounds_wgs84 is None:
+                    bounds_wgs84 = self._bounds_to_wgs84(src)
 
             channels.append(arr)
 
         if all(c is None for c in channels):
-            return None, None
+            return None, None, None
 
         h, w = shape or ref_shape or (0, 0)
         resolved = [
@@ -173,7 +180,19 @@ class IndexReader:
         ]
 
         patch = np.stack(resolved, axis=0)   # (C, H, W)
-        return patch, (h, w)
+        return patch, (h, w), bounds_wgs84
+
+    @staticmethod
+    def _bounds_to_wgs84(src) -> list[list[float]] | None:
+        if src.crs is None:
+            return None
+        west, south, east, north = transform_bounds(
+            src.crs,
+            "EPSG:4326",
+            *src.bounds,
+            densify_pts=21,
+        )
+        return [[float(south), float(west)], [float(north), float(east)]]
 
     @staticmethod
     def _date_to_doy(date_str: str) -> int:
@@ -286,6 +305,8 @@ class DatasetWriter:
             data  = patches_norm,                          # (T, C, H, W) float32
             dates = np.array(ts.dates, dtype="U10"),       # (T,) YYYY-MM-DD
             doy   = np.array(ts.doy,   dtype=np.int16),   # (T,) día del año
+            bounds_wgs84 = np.array(ts.bounds_wgs84, dtype=np.float64)
+            if ts.bounds_wgs84 is not None else np.empty((0, 2), dtype=np.float64),
         )
         return out
 

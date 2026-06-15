@@ -88,6 +88,7 @@ class Sam2MaskResponse(BaseModel):
     width: int
     height: int
     classes: list[list[int]]
+    bounds: Optional[list[list[float]]] = None
     source: str
     window_size: int
     latest_date: Optional[str] = None
@@ -335,12 +336,17 @@ def sam2_mask(
         if "dates" in npz and len(npz["dates"]):
             latest_date = str(npz["dates"][-1])
 
+        bounds = None
+        if "bounds_wgs84" in npz and npz["bounds_wgs84"].shape == (2, 2):
+            bounds = npz["bounds_wgs84"].astype(float).tolist()
+
         height, width = mask.shape
         return {
             "parcel_id": parcel_id,
             "width": int(width),
             "height": int(height),
             "classes": mask.tolist(),
+            "bounds": bounds,
             "source": "ndmi_window_preview",
             "window_size": WINDOW_SIZE,
             "latest_date": latest_date,

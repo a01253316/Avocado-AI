@@ -139,9 +139,61 @@ El boton `Escanear mapa` analiza las parcelas pendientes que esten visibles en l
 En la pestana `SAM2`:
 
 - `Analizar todo` genera mascaras pixeladas para las parcelas cargadas.
-- Los filtros `Sin estres`, `Moderado`, `Severo` y `Sin mascara` solo cambian la visibilidad en el mapa.
-- La lista `Parcelas activas` permite centrar el mapa en una parcela sin salir de la pestana.
+- `Ajustar overlap` compacta mas los bounds y promedia las clases calibradas cuando varias mascaras caen sobre el mismo pixel.
+- Los filtros de `Pixeles visibles` (`Sin estres`, `Moderado`, `Severo`) solo cambian que clases del raster final se muestran.
+- Los filtros de `Diagnostico Sentinel` controlan que parcelas aportan mascaras al raster segun su clase de analisis.
+- Los filtros de `Coordenadas visibles` controlan que puntos del mapa se muestran por clase Sentinel, sin afectar el raster.
+- `Sin mascara` muestra u oculta las parcelas pendientes sin raster generado.
+- En la pestana `SAM2`, dar clic en un marcador oculta o muestra la mascara de esa parcela.
+- La lista `Parcelas activas` tambien permite ocultar o mostrar la mascara de una parcela sin salir de la pestana.
 - Las mascaras se calculan con `data/datasets/patches/<parcel_id>.npz` y `data/datasets/normalizer_stats.json`.
+- Si los `.npz` incluyen `bounds_wgs84`, las mascaras se colocan con bounds reales de Sentinel-2. Regenera el dataset con `make build-dataset` para obtenerlos.
+- La vista compacta reduce el footprint visual del patch alrededor de la coordenada porque `bounds_wgs84` representa el chip Sentinel-2 completo, no el poligono real del huerto.
+- En zonas con overlap, el mapa compone una sola capa y cada pixel queda con una sola clase final; los filtros solo muestran u ocultan esa clase, no recalculan el ganador del pixel.
+- Con `Ajustar overlap` activo, los pixeles solapados se resuelven por mayoria de votos entre mascaras calibradas, no por prioridad de severidad.
+- La clase pixelada se calibra con el diagnostico de la parcela: una parcela `Sin estres` no pinta pixeles rojos, una `Moderado` no domina en rojo, y una `Severo` conserva la mascara completa.
+
+## Fine-tuning SAM2
+
+El branch `sam2-finetuning` prepara SAM2 con nuestro dataset usando pseudo-mascaras NDMI. Los pesos base de SAM2 no se guardan en GitHub; deben descargarse por separado en `models/checkpoints/`.
+
+Exporta imagenes y mascaras para SAM2:
+
+```powershell
+make prepare-sam2
+```
+
+Instala dependencias opcionales:
+
+```powershell
+python -m pip install -r requirements-sam2.txt
+```
+
+Descarga el checkpoint base SAM2.1 tiny:
+
+```powershell
+make download-sam2-checkpoint
+```
+
+Ejecuta fine-tuning:
+
+```powershell
+make train-sam2
+```
+
+El entrenamiento usa `SAM2_DEVICE=auto`: intenta CUDA si esta disponible y si no usa CPU. Para forzar CPU:
+
+```powershell
+make train-sam2 SAM2_DEVICE=cpu
+```
+
+La salida queda en:
+
+```text
+models/sam2_avocado_finetuned.pt
+```
+
+Ese archivo tambien queda fuera de GitHub.
 
 ## Pipeline completo
 

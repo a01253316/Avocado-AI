@@ -4,6 +4,10 @@
 # Data
 /data/
 
+# Model checkpoints generated/downloaded locally
+models/checkpoints/
+models/sam2_*.pt
+
 # MLflow
 mlflow.db
 mlruns/
