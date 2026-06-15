@@ -18,9 +18,11 @@ N_FEATURES    = len(CHANNEL_NAMES) * len(STAT_NAMES)  # 35
 
 
 def load_thresholds(norm_path: pathlib.Path) -> tuple[float, float]:
-    """Convierte umbrales NDMI raw a espacio normalizado minmax."""
+    """Carga umbrales NDMI normalizados desde metadata o stats minmax."""
     with open(norm_path) as f:
         ns = json.load(f)
+    if "t_mod" in ns and "t_sev" in ns:
+        return float(ns["t_mod"]), float(ns["t_sev"])
     stats = ns["stats"]["NDMI"]
     denom = stats["max"] - stats["min"]
     t_mod = (-0.10 - stats["min"]) / denom

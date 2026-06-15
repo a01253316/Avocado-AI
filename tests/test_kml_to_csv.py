@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from ingestion.kml_to_csv import enrich, parse_kml, _natural_sort_key
 
 
-KML_PATH = Path("data/raw/parcels/aguacates_jalisco_5_5_26.kml")
+KML_PATH = Path("notebooks/data/csv/aguacates_jalisco_5_5_26.kml")
 
 
 # ── parse_kml ──────────────────────────────────────────────

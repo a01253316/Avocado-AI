@@ -7,6 +7,22 @@ const MAP_CTR   = [20.5, -103.5];
 const MAP_ZOOM  = 9;
 const SCAN_N    = 30;   // parcels to batch-scan
 
+async function readJsonOrThrow(res) {
+  const text = await res.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(text.slice(0, 240));
+    }
+  }
+  if (!res.ok) {
+    throw new Error(data?.detail || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
 const COLOR = { 0: '#388E3C', 1: '#F9A825', 2: '#C62828', null: '#9E9E9E' };
 const LABEL = { 0: '🟢 Sin estrés', 1: '🟡 Estrés moderado', 2: '🔴 Estrés severo' };
 
@@ -85,7 +101,7 @@ document.head.appendChild(rippleStyle);
 async function loadParcels() {
   try {
     const res  = await fetch(`${API}/parcels?limit=200`);
-    const data = await res.json();
+    const data = await readJsonOrThrow(res);
     parcels = data.parcels;
     document.getElementById('v-total').textContent = data.total;
 
@@ -130,10 +146,9 @@ async function analyzeParcel(parcelId, skipLlm = false) {
       body: JSON.stringify({ parcel_id: parcelId, skip_llm: skipLlm }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || `HTTP ${res.status}`);
+      await readJsonOrThrow(res);
     }
-    const data = await res.json();
+    const data = await readJsonOrThrow(res);
     results[parcelId] = data;
     setMarkerClass(parcelId, data.stress.class);
     updateStats();
@@ -157,10 +172,9 @@ async function analyzeCoords(lat, lon, photo, mime, skipLlm) {
     }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    await readJsonOrThrow(res);
   }
-  return res.json();
+  return readJsonOrThrow(res);
 }
 
 async function analyzeParcelAndRender(parcelId, skipLlm = false) {
@@ -262,7 +276,7 @@ function renderResult(data) {
       ? `(${llm_report.model_used})`
       : '';
   } else {
-    reportEl.textContent  = 'Análisis en modo rápido — sin reporte Claude.';
+    reportEl.textContent  = 'Analisis en modo rapido - sin reporte LLM.';
     reportEl.className    = 'report-body fallback';
     modelEl.textContent   = '';
   }

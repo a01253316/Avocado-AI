@@ -13,11 +13,11 @@ import base64
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-import anthropic
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,12 +32,25 @@ from .llm import generate_report
 from .predictor import get_predictor
 from .sentinel import LocalCatalog
 
+try:
+    import anthropic
+except ModuleNotFoundError:
+    anthropic = None
+
 # ── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Water Stress Detector API",
-    description="Detección de estrés hídrico en aguacate (Jalisco) con Sentinel-2 + ML + Claude",
+    description="Detección de estrés hídrico en aguacate (Jalisco) con Sentinel-2 + ML + Ollama",
     version="1.0.0",
 )
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(_, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc) or exc.__class__.__name__},
+    )
 
 # ── Schemas de entrada ───────────────────────────────────────────────────────
 
@@ -49,7 +62,7 @@ class AnalyzeRequest(BaseModel):
         description="Foto del campo en base64 (JPEG/PNG). Activa análisis visual con GPT-4o.",
     )
     photo_mime: str = Field("image/jpeg", description="MIME type de la foto")
-    skip_llm: bool = Field(False, description="Si True, devuelve solo la predicción ML sin Claude.")
+    skip_llm: bool = Field(False, description="Si True, devuelve solo la predicción ML sin LLM.")
 
     @field_validator("photo_b64")
     @classmethod
@@ -78,7 +91,11 @@ def get_catalog(s: Settings = Depends(get_settings)) -> LocalCatalog:
     return LocalCatalog(s.abs(s.parcelas_csv), s.abs(s.patches_dir))
 
 
-def get_anthropic(s: Settings = Depends(get_settings)) -> anthropic.Anthropic:
+def get_anthropic(s: Settings = Depends(get_settings)) -> Optional[Any]:
+    if s.llm_provider.lower() == "ollama" or not s.anthropic_api_key:
+        return None
+    if anthropic is None:
+        raise RuntimeError("The 'anthropic' package is required when LLM_PROVIDER=anthropic")
     return anthropic.Anthropic(api_key=s.anthropic_api_key)
 
 
@@ -95,7 +112,7 @@ def _run_pipeline(
     photo_b64: Optional[str],
     photo_mime: str,
     settings: Settings,
-    claude_client: anthropic.Anthropic,
+    claude_client: Optional[Any],
     t_mod: float,
     t_sev: float,
 ) -> dict:
@@ -126,6 +143,9 @@ def _run_pipeline(
             parcel_info=parcel_info,
             photo_b64=photo_b64,
             photo_mime=photo_mime,
+            provider=settings.llm_provider,
+            ollama_base_url=settings.ollama_base_url,
+            ollama_model=settings.ollama_model,
         )
 
     elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
@@ -200,7 +220,7 @@ def analyze(
     req:     AnalyzeRequest,
     settings:  Settings            = Depends(get_settings),
     catalog:   LocalCatalog        = Depends(get_catalog),
-    claude_c:  anthropic.Anthropic = Depends(get_anthropic),
+    claude_c:  Optional[Any] = Depends(get_anthropic),
     thresholds: tuple              = Depends(get_thresholds),
 ):
     """
@@ -209,7 +229,7 @@ def analyze(
     - Localiza la parcela Sentinel-2 más cercana al punto del usuario.
     - Extrae las características de la serie temporal.
     - Ejecuta el modelo E3 Stacking.
-    - Genera un reporte agronómico con Claude (texto + foto opcional).
+    - Genera un reporte agronómico con Ollama local (texto + foto opcional).
     """
     try:
         parcel = catalog.find_nearest(req.lat, req.lon)
@@ -243,7 +263,7 @@ def analyze_parcel(
     req:      ParcelRequest,
     settings:  Settings            = Depends(get_settings),
     catalog:   LocalCatalog        = Depends(get_catalog),
-    claude_c:  anthropic.Anthropic = Depends(get_anthropic),
+    claude_c:  Optional[Any] = Depends(get_anthropic),
     thresholds: tuple              = Depends(get_thresholds),
 ):
     """Diagnóstico de una parcela específica por ID (para el dashboard de cooperativas)."""

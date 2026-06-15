@@ -44,7 +44,7 @@ def _make_tif(path: Path, value: float, shape: tuple = SHAPE, dtype="float32") -
         driver="GTiff",
         height=shape[0], width=shape[1],
         count=1,
-        dtype=rasterio.float32,
+        dtype=dtype,
         crs="EPSG:32614",
         transform=TRANSFORM,
     ) as dst:
@@ -67,7 +67,7 @@ def _make_band_dir(base: Path, bands: dict[str, float]) -> Path:
 class TestBandLoader:
     def test_normalizes_dn_to_reflectance(self, tmp_path):
         tif = tmp_path / "B08.tif"
-        _make_tif(tif, 8000.0)  # DN = 8000 → reflectance = 0.8
+        _make_tif(tif, 8000.0, dtype="uint16")  # DN = 8000 -> reflectance = 0.8
 
         loader = BandLoader()
         arr, _ = loader.load(tif, "B08")

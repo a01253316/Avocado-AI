@@ -1,189 +1,238 @@
-# 🥑 AguaVerde — Detección de Estrés Hídrico en Aguacate
+# AguaVerde - Deteccion de Estres Hidrico en Aguacate
 
-Sistema de monitoreo satelital para cooperativas aguacateras en Jalisco, México.  
-Combina imágenes Sentinel-2, modelos de ensemble y un reporte agronómico generado por **Claude** (Anthropic).
+Sistema de monitoreo satelital para parcelas de aguacate en Jalisco. Combina datos Sentinel-2, modelos de ensemble y un reporte agronomico generado con un LLM local mediante Ollama.
 
----
+## Resumen
 
-## 🎯 ¿Qué hace el sistema?
+El sistema permite:
 
-1. Descarga y procesa series temporales de imágenes Sentinel-2 por parcela
-2. Extrae 5 índices espectrales (NDVI, NDWI, NDMI, NDRE, EVI) en ventanas deslizantes
-3. Predice el nivel de estrés hídrico con un modelo **E3 Stacking** (F1-macro = **0.8868**)
-4. Genera un reporte agronómico en español con **Claude** (multimodal — acepta foto del campo)
-5. Visualiza todo en un **dashboard interactivo** con mapa Leaflet
+1. Cargar parcelas georreferenciadas en un mapa.
+2. Leer parches satelitales `.npz` por parcela.
+3. Extraer indices espectrales y features de la ventana mas reciente.
+4. Predecir estres hidrico con el modelo E3 Stacking.
+5. Generar un reporte agronomico usando Ollama/OpenLLaMA u otro modelo local.
+6. Visualizar todo en un dashboard servido por FastAPI.
 
----
+## Stack
 
-## 🏆 Modelo Final — E3 Stacking
+| Capa | Tecnologia |
+| --- | --- |
+| Backend | FastAPI, Pydantic Settings, Uvicorn |
+| Modelo ML | scikit-learn, XGBoost, joblib |
+| LLM local | Ollama (`OLLAMA_MODEL`) |
+| Modelo LLM recomendado | `openllama`; `llama3.2:3b` como alternativa ligera para PC sencilla |
+| Frontend | HTML, CSS, Vanilla JS, Leaflet, Chart.js |
+| Datos | Sentinel-2 / parches `.npz` por parcela |
 
-| Componente       | Detalle                                    |
-|------------------|--------------------------------------------|
-| Base learners    | Random Forest · XGBoost · SVM (RBF)       |
-| Meta-learner     | Logistic Regression                        |
-| Features         | 35 estadísticos × ventana de 24 fechas     |
-| Split            | GroupShuffleSplit por `parcel_id`          |
-| **F1-macro**     | **0.8868**                                 |
+## Datos y modelos
 
-**Clases de estrés:**
+El flujo normal del proyecto genera los datos preprocesados y los modelos desde el codigo del repositorio. Primero se extraen las parcelas, despues se descargan y procesan las imagenes Sentinel-2, luego se construye el dataset SITS y finalmente se entrena el modelo principal.
 
-| Clase | Etiqueta       | NDMI normalizado |
-|-------|----------------|------------------|
-| 0     | Sin estrés     | > 0.2493         |
-| 1     | Moderado       | 0.0571 – 0.2493  |
-| 2     | Severo         | < 0.0571         |
-
----
-
-## 📦 Stack
-
-| Capa          | Tecnología                                              |
-|---------------|---------------------------------------------------------|
-| Datos         | Sentinel-2 (ESA / CDSE), 100 parcelas en Jalisco       |
-| Modelo        | scikit-learn · XGBoost · joblib                        |
-| Backend       | FastAPI · Pydantic-Settings · Uvicorn                  |
-| LLM           | Anthropic Claude (`claude-opus-4-8`) — multimodal      |
-| Frontend      | Vanilla JS · Leaflet.js · Chart.js                     |
-| Notebooks     | Jupyter · MLflow (tracking de experimentos)            |
-
----
-
-## 🗂️ Estructura del Proyecto
-
-```
-integrative-project/
-├── api/                          # Backend FastAPI
-│   ├── main.py                   # Endpoints + montura del frontend
-│   ├── config.py                 # Settings (pydantic-settings + .env)
-│   ├── features.py               # Extracción de 35 features por ventana
-│   ├── predictor.py              # E3 Stacking inference (lru_cache)
-│   ├── sentinel.py               # LocalCatalog — haversine nearest parcel
-│   └── llm.py                    # Reporte agronómico con Claude
-│
-├── frontend/                     # Dashboard web (servido en /ui)
-│   ├── index.html
-│   ├── style.css
-│   └── app.js
-│
-├── models/                       # Artefactos serializados
-│   ├── ensemble_stacking.joblib  # E3 Stacking (pipeline de 3 base learners)
-│   ├── ensemble_scaler.joblib    # MinMaxScaler
-│   └── ensemble_meta.json        # Umbrales NDMI normalizados
-│
-├── data/
-│   └── raw/parcels/
-│       ├── parcelas.csv          # 100 parcelas (lat, lon, tile, estado)
-│       └── patches/              # Parches .npz — shape (277, 5, 50, 53)
-│
-├── notebooks/
-│   ├── Avance5.equipo16.ipynb    # Notebook principal: features → modelos → evaluación
-│   └── 01_eda_parcelas.ipynb     # EDA de parcelas y Sentinel-2
-│
-├── configs/                      # YAMLs de parcelas y Sentinel-2
-├── src/                          # Scripts de ingesta y procesamiento
-├── tests/
-├── requirements.txt              # Dependencias del notebook / ML
-├── requirements-api.txt          # Dependencias del backend
-├── Makefile
-├── .env.example                  # Plantilla de variables de entorno
-└── README.md
+```powershell
+make extract-parcels
+make download-sentinel2
+make compute-indices
+make build-dataset
+make train-ensemble
 ```
 
----
+Ese proceso crea los artefactos que usa el dashboard:
 
-## 🚀 Inicio Rápido
+```text
+data/datasets/
+  patches/*.npz
+  normalizer_stats.json
 
-### 1. Variables de entorno
-
-```bash
-cp .env.example .env
-# Edita .env con tus credenciales:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   CDSE_USER=tu_email@ejemplo.com
-#   CDSE_PASSWORD=tu_contraseña
+models/
+  ensemble_stacking.joblib
+  ensemble_scaler.joblib
+  ensemble_meta.json
 ```
 
-### 2. Instalar dependencias
+## Preparar entorno
 
-```bash
-pip install -r requirements-api.txt
+El modelo actual fue guardado con una version nueva de scikit-learn, asi que usa Python 3.11+.
+
+Conda recomendado:
+
+```powershell
+conda create -n avocado-ai python=3.12 -y
+conda activate avocado-ai
 ```
 
-### 3. Levantar el backend + dashboard
+Instala dependencias del backend:
 
-```bash
-uvicorn api.main:app --reload
+```powershell
+python -m pip install -r requirements-api.txt
 ```
 
-Abre **http://127.0.0.1:8000/ui** para el dashboard interactivo.  
-La documentación automática de la API está en **http://127.0.0.1:8000/docs**.
+## Configurar Ollama / OpenLLaMA
 
----
+Este proyecto usa Ollama como servidor local de LLM. No necesita API key para el reporte agronomico.
 
-## 🗺️ Dashboard
+Instala Ollama y descarga un modelo:
 
-El dashboard permite a la cooperativa:
+```powershell
+ollama pull openllama
+```
 
-- **Visualizar las 100 parcelas** en un mapa interactivo de Jalisco con marcadores coloreados por nivel de estrés
-- **⚡ Escanear mapa** — analiza las primeras 30 parcelas en batch (solo ML, sin LLM) para colorear el mapa en tiempo real
-- **Clic en cualquier marcela** → diagnóstico completo: índices, gráfica de tendencia NDMI, barras de probabilidad y reporte Claude
-- **Nueva ubicación** → ingresar lat/lon manualmente + foto del campo opcional para análisis multimodal
-- **Filtros** por nivel de estrés (sin estrés / moderado / severo)
+Tambien puedes usar otra opcion ligera si tu PC lo necesita:
 
----
+```powershell
+ollama pull llama3.2:3b
+```
 
-## 🌐 API Endpoints
+Crea `.env` a partir de `.env.example`:
 
-| Método | Ruta                  | Descripción                                           |
-|--------|-----------------------|-------------------------------------------------------|
-| GET    | `/health`             | Liveness check                                        |
-| GET    | `/parcels`            | Lista parcelas (`?limit=N`, máx 200)                  |
-| POST   | `/analyze`            | Diagnóstico por coordenadas GPS + foto opcional       |
-| POST   | `/analyze/parcel`     | Diagnóstico por `parcel_id` directo                   |
-| GET    | `/ui`                 | Dashboard web (Leaflet + Chart.js)                    |
-| GET    | `/docs`               | Swagger UI autogenerado                               |
+```powershell
+copy .env.example .env
+```
 
-### Ejemplo — POST /analyze
+Configuracion minima:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=openllama
+```
+
+Si quieres usar el modelo ligero, cambia solo el modelo:
+
+```env
+OLLAMA_MODEL=llama3.2:3b
+```
+
+En `.env.example` hay varias opciones comentadas. Deja solo una linea `OLLAMA_MODEL=` sin comentar.
+
+## Ejecutar dashboard
+
+```powershell
+python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+O, si tu `make` usa el mismo entorno `avocado-ai`:
+
+```powershell
+make dev
+```
+
+Abre:
+
+```text
+http://127.0.0.1:8000/ui
+```
+
+Swagger/API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## Pipeline completo
+
+Para generar el dataset desde cero:
+
+```powershell
+make extract-parcels
+make download-sentinel2
+make compute-indices
+make build-dataset
+```
+
+Despues entrena el modelo principal:
+
+```powershell
+make train-ensemble
+```
+
+Flujo recomendado completo:
+
+```powershell
+conda activate avocado-ai
+python -m pip install -r requirements-api.txt
+ollama pull openllama
+make extract-parcels
+make download-sentinel2
+make compute-indices
+make build-dataset
+make train-ensemble
+python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+## API
+
+| Metodo | Ruta | Descripcion |
+| --- | --- | --- |
+| GET | `/health` | Estado del backend |
+| GET | `/parcels` | Lista parcelas |
+| POST | `/analyze` | Analiza coordenadas GPS |
+| POST | `/analyze/parcel` | Analiza una parcela por ID |
+| GET | `/ui` | Dashboard |
+| GET | `/docs` | Swagger UI |
+
+Ejemplo `POST /analyze/parcel`:
 
 ```json
 {
-  "lat": 19.6630,
-  "lon": -103.4870,
-  "photo_b64": null,
+  "parcel_id": "H40",
   "skip_llm": false
 }
 ```
 
-Respuesta:
+Respuesta resumida:
+
 ```json
 {
-  "location": { "parcel_id": "H1", "dist_km": 0.12, "state": "Jalisco" },
-  "stress":   { "class": 1, "label": "Moderado", "emoji": "🟡", "confidence": 0.94 },
-  "indices":  { "NDMI": 0.1823, "NDVI": 0.6102, "NDWI": 0.1045, "NDRE": 0.3421, "EVI": 0.4809 },
-  "trend":    { "direction": "descendente", "worsening_alert": true, "windows": [...] },
-  "llm_report": { "full_text": "...", "model_used": "claude-opus-4-8" }
+  "location": { "parcel_id": "H40", "state": "Jalisco" },
+  "stress": { "class": 1, "label": "Moderado", "confidence": 0.94 },
+  "indices": { "NDMI": 0.1823, "NDVI": 0.6102 },
+  "llm_report": { "model_used": "openllama", "fallback": false }
 }
 ```
 
----
+## Problemas comunes
 
-## 📡 Índices Espectrales Sentinel-2
+### `No se encontro el parche .npz`
 
-| Índice | Bandas        | Qué mide                          |
-|--------|---------------|-----------------------------------|
-| NDMI   | B08, B11      | Humedad en hoja/dosel ★ (clave)   |
-| NDVI   | B08, B04      | Vigor vegetal general             |
-| NDWI   | B03, B08      | Contenido de agua en vegetación   |
-| NDRE   | B08, B05      | Estrés temprano — clorofila ★     |
-| EVI    | B08, B04, B02 | Vegetación en zonas densas        |
+Falta el dataset preprocesado:
 
-Cada parche tiene shape `(T=277, C=5, H=50, W=53)`.  
-Las features se extraen con una ventana deslizante de W=24 fechas (paso=4): **7 estadísticos × 5 canales = 35 features**.
+```text
+data/datasets/patches/<parcel_id>.npz
+```
 
----
+Genera el dataset con el pipeline:
 
-## 📌 Referencias
+```powershell
+make extract-parcels
+make download-sentinel2
+make compute-indices
+make build-dataset
+```
 
-- Garnot & Landrieu (2021) — *ViTs for SITS: Vision Transformers for Satellite Image Time Series*
-- ESA — Sentinel-2 User Guide
-- Anthropic — [Claude API](https://docs.anthropic.com)
+### `LogisticRegression object has no attribute multi_class`
+
+Es incompatibilidad de version de scikit-learn. Usa Python 3.12 y reinstala:
+
+```powershell
+conda activate avocado-ai
+python -m pip install -r requirements-api.txt
+```
+
+### `No se pudo conectar a Ollama`
+
+Confirma que Ollama esta instalado y que el modelo existe:
+
+```powershell
+ollama list
+ollama pull openllama
+```
+
+### El dashboard carga mapa pero no analiza parcelas
+
+El CSV de parcelas esta disponible, pero faltan los `.npz` en `data/datasets/patches/`. Genera el dataset con `make build-dataset` despues de preparar los indices.
+
+## Referencias
+
+- ESA Sentinel-2 User Guide
+- Ollama: https://ollama.com
+- scikit-learn model persistence: https://scikit-learn.org/stable/model_persistence.html

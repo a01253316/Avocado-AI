@@ -39,7 +39,7 @@
     </div>
 
     <div class="header-actions">
-      <button class="btn btn-outline" id="btn-scan" title="Analizar primeras 30 parcelas sin reporte Claude">
+      <button class="btn btn-outline" id="btn-scan" title="Analizar primeras 30 parcelas sin reporte LLM">
         ⚡ Escanear mapa
       </button>
       <button class="btn btn-outline" id="btn-filter-all" title="Mostrar todas">Todas</button>
@@ -178,7 +178,7 @@
               <div class="drop-hint" id="drop-hint">
                 <span class="drop-icon">📷</span>
                 <span>Arrastra o selecciona imagen</span>
-                <span class="drop-sub">JPEG, PNG, WebP · Activa visión con Claude</span>
+                <span class="drop-sub">JPEG, PNG, WebP · Activa analisis visual si el modelo local lo soporta</span>
               </div>
               <img id="photo-preview" class="hidden" alt="preview" />
               <button type="button" class="clear-photo hidden" id="clear-photo">✕</button>
@@ -187,7 +187,7 @@
 
           <div class="form-check">
             <input type="checkbox" id="skip-llm" />
-            <label for="skip-llm">Omitir reporte Claude (solo ML, más rápido)</label>
+            <label for="skip-llm">Omitir reporte LLM (solo ML, mas rapido)</label>
           </div>
 
           <button type="submit" class="btn btn-primary" id="btn-analyze">

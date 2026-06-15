@@ -33,9 +33,29 @@ class LocalCatalog:
     """
 
     def __init__(self, parcelas_csv: pathlib.Path, patches_dir: pathlib.Path):
-        self._df       = pd.read_csv(parcelas_csv)
+        self._df       = self._load_parcels(parcelas_csv)
         self._patches  = patches_dir
         self._validate()
+
+    def _load_parcels(self, parcelas_csv: pathlib.Path) -> pd.DataFrame:
+        if not parcelas_csv.exists():
+            raise FileNotFoundError(
+                f"No se encontro el catalogo de parcelas: {parcelas_csv}"
+            )
+
+        df = pd.read_csv(parcelas_csv)
+        rename_map = {}
+        if "parcel_id" not in df.columns and "parcela" in df.columns:
+            rename_map["parcela"] = "parcel_id"
+        if "latitude" not in df.columns and "lat" in df.columns:
+            rename_map["lat"] = "latitude"
+        if "longitude" not in df.columns and "lon" in df.columns:
+            rename_map["lon"] = "longitude"
+        if rename_map:
+            df = df.rename(columns=rename_map)
+        if "state" not in df.columns:
+            df["state"] = "Jalisco"
+        return df
 
     def _validate(self):
         required = {"parcel_id", "latitude", "longitude"}

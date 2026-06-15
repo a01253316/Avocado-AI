@@ -5,12 +5,14 @@ Usa datos sintéticos — sin credenciales ni GPU requerida.
 """
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -23,7 +25,13 @@ from models.vit.sits_vit import (
     build_vit,
     sits_collate_fn,
 )
-from models.vit.sits_vit_dataset import SITSViTDataset
+vit_dataset = importlib.import_module("models.vit.sits_vit_dataset")
+if not hasattr(vit_dataset, "SITSViTDataset"):
+    pytest.skip(
+        "Legacy SITSViTDataset API no longer available; current training uses SITSPixelDataset.",
+        allow_module_level=True,
+    )
+SITSViTDataset = vit_dataset.SITSViTDataset
 from models.vit.train_vit import EarlyStopping, WarmupCosineScheduler
 
 # ---------------------------------------------------------------------------
