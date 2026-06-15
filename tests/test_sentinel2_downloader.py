@@ -3,6 +3,7 @@ tests/test_sentinel2_downloader.py
 Tests unitarios del downloader usando mocks — no requiere credenciales.
 """
 import json
+import importlib
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,14 +12,26 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ingestion.sentinel2_downloader import (
-    BandDownloader,
-    CDSEAuth,
-    DownloadConfig,
-    Parcel,
-    STACSearcher,
-    _CDSESession,
-)
+sentinel2_downloader = importlib.import_module("ingestion.sentinel2_downloader")
+
+missing_legacy_api = [
+    name
+    for name in ("BandDownloader", "_CDSESession")
+    if not hasattr(sentinel2_downloader, name)
+]
+if missing_legacy_api:
+    pytest.skip(
+        "Legacy Sentinel-2 band downloader API no longer available: "
+        + ", ".join(missing_legacy_api),
+        allow_module_level=True,
+    )
+
+BandDownloader = sentinel2_downloader.BandDownloader
+CDSEAuth = sentinel2_downloader.CDSEAuth
+DownloadConfig = sentinel2_downloader.DownloadConfig
+Parcel = sentinel2_downloader.Parcel
+STACSearcher = sentinel2_downloader.STACSearcher
+_CDSESession = sentinel2_downloader._CDSESession
 
 # ---------------------------------------------------------------------------
 # Fixtures

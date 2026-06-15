@@ -1,13 +1,19 @@
 """
-Integración con Anthropic Claude (multimodal).
+Integracion LLM con Ollama local y Claude opcional.
 Genera reportes agronómicos en español a partir de la predicción + índices espectrales.
 """
 from __future__ import annotations
 
 import textwrap
-from typing import Optional
+import json
+from typing import Any, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
-import anthropic
+try:
+    import anthropic
+except ModuleNotFoundError:
+    anthropic = None
 
 _SYSTEM_PROMPT = textwrap.dedent("""
     Eres un asesor agronómico especialista en cultivos de aguacate (Hass) en Jalisco,
@@ -72,7 +78,7 @@ def _build_user_content(
     content: list[dict] = [{"type": "text", "text": text}]
 
     if photo_b64:
-        # Anthropic vision format: type=image, source.type=base64
+        # Shared image format; Ollama uses data only, Anthropic uses the source object.
         content.append({
             "type": "image",
             "source": {
@@ -86,7 +92,7 @@ def _build_user_content(
 
 
 def generate_report(
-    client: anthropic.Anthropic,
+    client: Optional[Any],
     model: str,
     prediction: dict,
     indices: dict,
@@ -94,15 +100,29 @@ def generate_report(
     parcel_info: dict,
     photo_b64: Optional[str] = None,
     photo_mime: str = "image/jpeg",
+    provider: str = "ollama",
+    ollama_base_url: str = "http://localhost:11434",
+    ollama_model: str = "openllama",
 ) -> dict:
     """
-    Llama a Claude y devuelve el reporte estructurado.
+    Llama al proveedor LLM configurado y devuelve el reporte estructurado.
     Si la API falla, devuelve un reporte de fallback basado en reglas.
     """
     try:
         user_content = _build_user_content(
             prediction, indices, trend, parcel_info, photo_b64, photo_mime
         )
+
+        if provider.lower() == "ollama":
+            return _generate_ollama_report(
+                model=ollama_model,
+                base_url=ollama_base_url,
+                user_content=user_content,
+                photo_b64=photo_b64,
+            )
+
+        if client is None:
+            raise RuntimeError("ANTHROPIC_API_KEY no esta configurada")
 
         response = client.messages.create(
             model=model,
@@ -125,6 +145,61 @@ def generate_report(
 
     except Exception as exc:
         return _fallback_report(prediction, str(exc))
+
+
+def _generate_ollama_report(
+    model: str,
+    base_url: str,
+    user_content: list[dict],
+    photo_b64: Optional[str],
+) -> dict:
+    """Genera el reporte usando Ollama local via /api/chat."""
+    user_text = "\n\n".join(
+        part["text"] for part in user_content if part.get("type") == "text"
+    )
+    message: dict[str, Any] = {"role": "user", "content": user_text}
+    if photo_b64:
+        message["images"] = [photo_b64]
+
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            message,
+        ],
+    }
+    url = f"{base_url.rstrip('/')}/api/chat"
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"No se pudo conectar a Ollama en {url}: {exc.reason}") from exc
+
+    full_text = data.get("message", {}).get("content", "").strip()
+    if not full_text:
+        raise RuntimeError("Ollama devolvio una respuesta vacia")
+
+    return {
+        "full_text": full_text,
+        "model_used": model,
+        "usage": {
+            "prompt_eval_count": data.get("prompt_eval_count"),
+            "eval_count": data.get("eval_count"),
+        },
+        "fallback": False,
+        "provider": "ollama",
+    }
 
 
 def _fallback_report(prediction: dict, error: str) -> dict:

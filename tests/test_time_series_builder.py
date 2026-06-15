@@ -135,6 +135,13 @@ class TestIndexReader:
         ts = reader.read_parcel("H1")
         assert ts.patches[0].shape == (N_CHANNELS, *SHAPE)
 
+    def test_reads_wgs84_bounds_from_tiff_metadata(self, tmp_path):
+        _make_parcel_dates(tmp_path, "H1", DATES_12)
+        reader = IndexReader(tmp_path)
+        ts = reader.read_parcel("H1")
+        assert ts.bounds_wgs84 is not None
+        assert np.array(ts.bounds_wgs84).shape == (2, 2)
+
     def test_missing_index_becomes_nan_channel(self, tmp_path):
         """Si falta EVI.tif, ese canal debe ser NaN."""
         dates = DATES_12[:8]
@@ -273,14 +280,29 @@ class TestDatasetWriter:
     def test_patch_npz_has_correct_keys(self, tmp_path):
         ts     = self._make_ts("H1")
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path, allow_pickle=True)
-        assert set(npz.files) >= {"data", "dates", "doy"}
+        assert set(npz.files) >= {"data", "dates", "doy", "bounds_wgs84"}
+
+    def test_patch_npz_stores_bounds_when_available(self, tmp_path):
+        ts = self._make_ts("H1")
+        ts.bounds_wgs84 = [[19.65, -103.50], [19.66, -103.49]]
+        writer = DatasetWriter(tmp_path)
+        path = writer.write_patch(ts, np.stack(ts.patches))
+        npz = np.load(path)
+        np.testing.assert_allclose(npz["bounds_wgs84"], ts.bounds_wgs84)
+
+    def test_patch_npz_stores_empty_bounds_when_unavailable(self, tmp_path):
+        ts = self._make_ts("H1")
+        writer = DatasetWriter(tmp_path)
+        path = writer.write_patch(ts, np.stack(ts.patches))
+        npz = np.load(path)
+        assert npz["bounds_wgs84"].shape == (0, 2)
 
     def test_patch_data_shape(self, tmp_path):
         ts     = self._make_ts("H1", n=8)
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path)
         assert npz["data"].shape == (8, N_CHANNELS, *SHAPE)
 
@@ -295,7 +317,7 @@ class TestDatasetWriter:
     def test_dates_array_length_matches(self, tmp_path):
         ts     = self._make_ts("H1", n=6)
         writer = DatasetWriter(tmp_path)
-        path   = writer.write_patch(ts)
+        path   = writer.write_patch(ts, np.stack(ts.patches))
         npz    = np.load(path, allow_pickle=True)
         assert len(npz["dates"]) == 6
 
