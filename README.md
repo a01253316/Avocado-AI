@@ -1,5 +1,11 @@
 # 🥑 AguaVerde — Detección de Estrés Hídrico en Aguacate
 
+<p align="center">
+  <a href="https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml">
+    <img src="https://github.com/a01253316/Avocado-AI/actions/workflows/main.yml/badge.svg?style=for-the-badge" alt="CI">
+  </a>
+</p>
+
 Sistema de monitoreo satelital para cooperativas aguacateras en Jalisco, México.  
 Combina imágenes Sentinel-2, modelos de ensemble, segmentación pixelada tipo SAM2 y un reporte agronómico generado con **Ollama local** por defecto, con **Claude** como proveedor opcional.
 
