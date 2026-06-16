@@ -14,7 +14,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import rasterio
+
+rasterio = pytest.importorskip("rasterio")
 from rasterio.transform import from_bounds
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
