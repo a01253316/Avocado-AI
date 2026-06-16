@@ -308,18 +308,18 @@ El dashboard es una aplicación web de una sola página (SPA) construida con **V
 ├─────────────────────────────┬───────────────────────────────────┤
 │                             │ 📍 Diagnóstico │ ➕ Nueva ubic.  │
 │      MAPA LEAFLET           │                                   │
-│                             │ Parcela H1 · 0.12 km             │
-│  ⚫⚫🟢🔴🟡🟢⚫⚫         │ 🟡 Estrés Moderado  94%          │
-│       Jalisco, México       │ ─────────────────────────────    │
-│                             │ NDMI: 0.1823  NDVI: 0.6102       │
-│                             │ NDWI: 0.1045  NDRE: 0.3421       │
+│                             │ Parcela H1 · 0.12 km              │
+│  ⚫⚫🟢🔴🟡🟢⚫⚫       │ 🟡 Estrés Moderado  94%           │
+│       Jalisco, México       │ ─────────────────────────────     │
+│                             │ NDMI: 0.1823  NDVI: 0.6102        │
+│                             │ NDWI: 0.1045  NDRE: 0.3421        │
 │  🟢 Sin estrés              │                                   │
 │  🟡 Moderado                │ 📈 Tendencia NDMI [chart]        │
-│  🔴 Severo                  │ ⬇ Tendencia descendente          │
+│  🔴 Severo                  │ ⬇ Tendencia descendente           │
 │  ⚫ Sin analizar            │                                   │
-│                             │ 🤖 Reporte Ollama/OpenLLaMA                │
-│                             │ "Su parcela muestra estrés       │
-│                             │ moderado. Recomendamos..."       │
+│                             │ 🤖 Reporte Ollama/OpenLLaMA       │
+│                             │ "Su parcela muestra estrés        │
+│                             │ moderado. Recomendamos..."        │
 └─────────────────────────────┴───────────────────────────────────┘
 ```
 
@@ -349,7 +349,7 @@ Botones en el header para mostrar solo parcelas sin estrés / moderado / severo.
                    │ HTTP (mismo origen)
                    ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    FastAPI  (api/main.py)                         │
+│                    FastAPI  (api/main.py)                        │
 │                                                                  │
 │  GET /parcels ──► LocalCatalog → parcelas.csv                    │
 │                                                                  │
@@ -363,7 +363,7 @@ Botones en el header para mostrar solo parcelas sin estrés / moderado / severo.
 │    ├─ EnsemblePredictor.predict()  ──► clase + confianza         │
 │    │         └── MinMaxScaler → Stacking → LogReg                │
 │    │                                                             │
-│    └─ generate_report()            ──► Ollama local API      │
+│    └─ generate_report()            ──► Ollama local API          │
 │              └── texto agronómico + análisis foto                │
 │                                                                  │
 │  GET /ui ──► frontend/ (HTML/CSS/JS + Leaflet + Chart.js)        │
