@@ -54,46 +54,38 @@ Combina imágenes Sentinel-2, modelos de ensemble, segmentación pixelada tipo S
 
 ```text
 integrative-project/
-├── api/                          # Backend FastAPI
-│   ├── main.py                   # Endpoints + montura del frontend
-│   ├── config.py                 # Settings (pydantic-settings + .env)
-│   ├── features.py               # Extracción de features y máscaras por parcela
-│   ├── predictor.py              # E3 Stacking inference (lru_cache)
-│   ├── sentinel.py               # LocalCatalog — haversine nearest parcel
-│   └── llm.py                    # Reporte agronómico con Ollama/Claude
-│
-├── frontend/                     # Dashboard web (servido en /ui)
-│   ├── index.html
-│   ├── style.css
-│   └── app.js
-│
-├── models/                       # Artefactos serializados
-│   ├── ensemble_stacking.joblib  # E3 Stacking
-│   ├── ensemble_scaler.joblib    # MinMaxScaler
-│   ├── ensemble_meta.json        # Umbrales NDMI normalizados
-│   └── checkpoints/              # Checkpoints SAM2 externos (no versionados)
-│
-├── data/
-│   ├── datasets/                 # Parches .npz + normalizer_stats.json
-│   └── raw/parcels/              # KML/CSV de parcelas
-│
-├── notebooks/
-│   ├── Avance5.equipo16.ipynb    # Notebook principal: features → modelos → evaluación
-│   ├── 01_eda_parcelas.ipynb     # EDA de parcelas y Sentinel-2
-│   └── 03_Baseline.ipynb         # Baseline histórico integrado
-│
-├── src/
-│   ├── ingestion/                # KML y descarga Sentinel-2
-│   ├── processing/               # Índices espectrales y dataset SITS
-│   └── models/sam2/              # Preparación y fine-tuning SAM2
-│
-├── tests/
-├── requirements.txt              # Dependencias del notebook / ML
-├── requirements-api.txt          # Dependencias del backend
-├── requirements-sam2.txt         # Dependencias opcionales SAM2
-├── Makefile
-├── .env.example
-└── README.md
+|-- api/                          # Backend FastAPI
+|   |-- main.py                   # Endpoints + montura del frontend
+|   |-- config.py                 # Settings (pydantic-settings + .env)
+|   |-- features.py               # Extracción de features y máscaras por parcela
+|   |-- predictor.py              # E3 Stacking inference (lru_cache)
+|   |-- sentinel.py               # LocalCatalog de parcelas
+|   `-- llm.py                    # Reporte agronómico con Ollama/Claude
+|
+|-- frontend/                     # Dashboard web (servido en /ui)
+|-- src/                          # Ingesta, procesamiento y modelos entrenables
+|-- tests/                        # Tests unitarios
+|-- configs/                      # Configuración YAML
+|-- scripts/                      # Utilidades y scripts manuales
+|-- notebooks/                    # Notebooks de exploración, avances y salidas asociadas
+|
+|-- docs/
+|   |-- reports/                  # Reportes finales y documentación académica
+|   |-- proceso_ejecucion_ollama.md
+|   `-- sam2_plan.md
+|
+|-- reports/
+|   `-- metrics/                  # Métricas exportadas para análisis y gráficas
+|
+|-- models/                       # Artefactos serializados y checkpoints externos
+|-- data/                         # Datos crudos, intermedios y datasets generados
+|
+|-- requirements.txt              # Dependencias del notebook / ML
+|-- requirements-api.txt          # Dependencias del backend
+|-- requirements-sam2.txt         # Dependencias opcionales SAM2
+|-- Makefile
+|-- .env.example
+`-- README.md
 ```
 
 ---
