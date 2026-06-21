@@ -63,6 +63,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="parcel"> Diagnostico</button>
         <button class="tab" data-tab="sam2">SAM2</button>
+        <button class="tab" data-tab="trend">Tendencias</button>
         <button class="tab" data-tab="new">+ Nueva ubicacion</button>
       </div>
 
@@ -266,6 +267,76 @@
             Vista preliminar basada en el clasificador entrenado. La integracion SAM2 real queda preparada como siguiente etapa.
           </div>
         </div>
+      </div>
+
+      <!-- -- Tab: Trend (Gaussian Process) ----------------------- -->
+      <div class="tab-content hidden" id="tab-trend">
+
+        <div class="trend-controls">
+          <div class="form-group">
+            <label for="trend-parcel">Parcela</label>
+            <select id="trend-parcel"></select>
+          </div>
+          <div class="form-group">
+            <label for="trend-index">Indice</label>
+            <select id="trend-index">
+              <option value="NDMI" selected>NDMI</option>
+              <option value="NDVI">NDVI</option>
+              <option value="NDWI">NDWI</option>
+              <option value="NDRE">NDRE</option>
+              <option value="EVI">EVI</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="btn-trend-calc">Calcular tendencia</button>
+        </div>
+
+        <p class="form-note">
+          Ajusta un Gaussian Process sobre el historial de esta parcela (Experimento D).
+          Clasifica la ultima observacion por cuantas desviaciones estandar cae respecto
+          a lo que el modelo esperaba para esa fecha - no por un percentil global fijo.
+        </p>
+
+        <div class="empty-state" id="trend-empty">
+          <div class="empty-icon"></div>
+          <p>Elige una parcela y calcula su tendencia</p>
+        </div>
+
+        <div class="hidden" id="trend-result">
+          <div class="view-toggle" id="trend-view-toggle">
+            <button class="view-toggle-btn active" data-view="individual">Individual</button>
+            <button class="view-toggle-btn" data-view="group">Grupo (terreno similar)</button>
+          </div>
+          <p class="form-note hidden" id="trend-no-group">
+            Sin agrupacion por terreno disponible para esta parcela - solo vista individual.
+          </p>
+
+          <div class="chart-wrap chart-wrap-lg">
+            <canvas id="gp-chart"></canvas>
+          </div>
+
+          <div class="section-label" id="trend-group-info"></div>
+
+          <div class="section-label">Ultima observacion</div>
+          <div class="indices-grid">
+            <div class="index-card">
+              <span class="idx-name">Fecha</span>
+              <span class="idx-value" id="trend-last-date">-</span>
+            </div>
+            <div class="index-card">
+              <span class="idx-name">Valor</span>
+              <span class="idx-value" id="trend-last-value">-</span>
+            </div>
+            <div class="index-card">
+              <span class="idx-name">z-score (GP)</span>
+              <span class="idx-value" id="trend-last-z">-</span>
+            </div>
+          </div>
+          <div class="trend-direction" id="trend-last-label">-</div>
+
+          <div class="section-label">Pronostico</div>
+          <p id="trend-forecast-text">-</p>
+        </div>
+
       </div>
 
       <!-- -- Tab: New location --------------------------------- -->

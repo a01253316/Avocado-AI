@@ -29,7 +29,7 @@ const LABEL = { 0: ' Sin estres', 1: ' Estres moderado', 2: ' Estres severo' };
 const SHORT_LABEL = { 0: 'sin estres', 1: 'moderado', 2: 'severo' };
 
 /* -- State ---------------------------------------------------- */
-let map, trendChart, sam2Layer;
+let map, trendChart, sam2Layer, gpChart;
 let markers  = {};   // parcel_id -> Leaflet marker
 let results  = {};   // parcel_id -> analysis result
 let sam2Masks = {};  // parcel_id -> pixel mask result
@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSam2();
   initForm();
   initFilters();
+  initTrend();
   loadParcels();
 });
 
@@ -114,6 +115,7 @@ async function loadParcels() {
     const data = await readJsonOrThrow(res);
     parcels = data.parcels;
     document.getElementById('v-total').textContent = data.total;
+    populateTrendParcelSelect();
 
     parcels.forEach(p => {
       const m = L.marker([p.latitude, p.longitude], { icon: makeIcon(null) }).addTo(map);
@@ -137,6 +139,8 @@ function onMarkerClick(p) {
   }
 
   switchTab('parcel');
+  const trendSelect = document.getElementById('trend-parcel');
+  if (trendSelect) trendSelect.value = p.parcel_id;
 
   // Use cached result (with LLM report) if available
   if (results[p.parcel_id]?.llm_report != null) {
@@ -342,6 +346,178 @@ function renderTrendChart(windows) {
       },
     },
   });
+}
+
+/* ==============================================================
+   GP TREND TAB (Experimento D - Gaussian Process por parcela)
+============================================================== */
+const Z_LABEL = {
+  sin_estres: 'Sin estres (dentro de lo esperado)',
+  moderado:   'Estres moderado (1-2 sigma por debajo de lo esperado)',
+  severo:     'Estres severo (>2 sigma por debajo de lo esperado)',
+};
+
+function populateTrendParcelSelect() {
+  const sel = document.getElementById('trend-parcel');
+  if (!sel) return;
+  sel.innerHTML = parcels
+    .map(p => `<option value="${p.parcel_id}">${p.parcel_id} - ${p.state}</option>`)
+    .join('');
+}
+
+let lastTrendData = null;
+let trendView = 'individual';   // 'individual' | 'group'
+
+function initTrend() {
+  document.getElementById('btn-trend-calc').addEventListener('click', calcTrend);
+  document.querySelectorAll('.view-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.view === 'group' && !lastTrendData?.group) return;
+      trendView = btn.dataset.view;
+      document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+      if (lastTrendData) applyTrendView(lastTrendData);
+    });
+  });
+}
+
+async function calcTrend() {
+  const parcelId = document.getElementById('trend-parcel').value;
+  const index    = document.getElementById('trend-index').value;
+  if (!parcelId) {
+    showToast('Selecciona una parcela', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-trend-calc');
+  btn.disabled = true;
+  btn.textContent = 'Calculando...';
+
+  try {
+    const res = await fetch(`${API}/parcels/${parcelId}/trend?index=${index}&horizon=5`);
+    const data = await readJsonOrThrow(res);
+    renderTrendResult(data);
+  } catch (e) {
+    showToast(`Error al calcular tendencia: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Calcular tendencia';
+  }
+}
+
+function renderTrendResult(data) {
+  document.getElementById('trend-empty').classList.add('hidden');
+  document.getElementById('trend-result').classList.remove('hidden');
+
+  lastTrendData = data;
+  trendView = 'individual';
+  document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'individual'));
+
+  const groupBtn = document.querySelector('.view-toggle-btn[data-view="group"]');
+  const hasGroup = !!data.group;
+  groupBtn.disabled = !hasGroup;
+  groupBtn.title = hasGroup
+    ? `${data.group.n_members} parcelas con terreno similar (grupo ${data.group.group_id})`
+    : 'Sin agrupacion por terreno disponible';
+  document.getElementById('trend-no-group').classList.toggle('hidden', hasGroup);
+
+  applyTrendView(data);
+}
+
+function applyTrendView(data) {
+  const block = (trendView === 'group' && data.group) ? data.group : {
+    forecast: data.forecast, last_observation: data.last_observation, gp_curve: data.gp_curve,
+  };
+  const { last_observation, forecast } = block;
+  const index = data.index;
+
+  document.getElementById('trend-last-date').textContent  = last_observation.date;
+  document.getElementById('trend-last-value').textContent = last_observation.value.toFixed(4);
+  document.getElementById('trend-last-z').textContent     = last_observation.z.toFixed(2);
+
+  const labelEl = document.getElementById('trend-last-label');
+  labelEl.textContent = Z_LABEL[last_observation.label] || last_observation.label;
+  labelEl.className   = `trend-direction ${
+    { sin_estres: 'ascendente', moderado: 'estable', severo: 'descendente' }[last_observation.label] || 'sin_datos'
+  }`;
+
+  const basis = trendView === 'group'
+    ? `con base en ${data.group.n_members} parcelas de terreno similar (grupo ${data.group.group_id}), no solo el historial propio`
+    : 'con base en el historial propio de esta parcela';
+  document.getElementById('trend-forecast-text').textContent =
+    `Para el ${forecast.date} (+5 dias), el GP espera ${index} = ${forecast.mean.toFixed(4)} +- ${forecast.std.toFixed(4)} (1 sigma), ${basis}.`;
+
+  const infoEl = document.getElementById('trend-group-info');
+  infoEl.textContent = trendView === 'group'
+    ? `Grupo de terreno ${data.group.group_id} - ${data.group.n_members} parcelas - baseline propio = ${data.group.baseline.toFixed(4)}`
+    : '';
+
+  renderGpChart(data, block);
+}
+
+function renderGpChart(data, block) {
+  if (gpChart) { gpChart.destroy(); gpChart = null; }
+
+  const { history, index } = data;
+  const { gp_curve, forecast } = block;
+  const upper2 = gp_curve.days.map((d, i) => ({ x: d, y: gp_curve.mean[i] + 2 * gp_curve.std[i] }));
+  const upper1 = gp_curve.days.map((d, i) => ({ x: d, y: gp_curve.mean[i] + gp_curve.std[i] }));
+  const meanLn = gp_curve.days.map((d, i) => ({ x: d, y: gp_curve.mean[i] }));
+  const lower1 = gp_curve.days.map((d, i) => ({ x: d, y: gp_curve.mean[i] - gp_curve.std[i] }));
+  const lower2 = gp_curve.days.map((d, i) => ({ x: d, y: gp_curve.mean[i] - 2 * gp_curve.std[i] }));
+  const observed = history.days.map((d, i) => ({ x: d, y: history.values[i] }));
+  const fcPoint = [{ x: forecast.day, y: forecast.mean }];
+  const isGroup  = trendView === 'group';
+  const lineColor = isGroup ? '#E65100' : '#388E3C';
+  const bandRgba  = isGroup ? '230,81,0' : '56,142,60';
+  const meanLabel = isGroup ? 'GP grupo' : 'GP individual';
+
+  const ctx = document.getElementById('gp-chart').getContext('2d');
+  gpChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: '-2 sigma', data: lower2, borderWidth: 0, pointRadius: 0, fill: false },
+        { label: '+2 sigma', data: upper2, borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: `rgba(${bandRgba},.10)` },
+        { label: '-1 sigma', data: lower1, borderWidth: 0, pointRadius: 0, fill: false },
+        { label: '+1 sigma', data: upper1, borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: `rgba(${bandRgba},.22)` },
+        { label: meanLabel, data: meanLn, borderColor: lineColor, borderWidth: 2, pointRadius: 0, fill: false, tension: .15 },
+        { label: index, data: observed, borderWidth: 0, pointRadius: 2.5, pointBackgroundColor: '#1C2018', showLine: false },
+        { label: 'Pronostico', data: fcPoint, pointRadius: 6, pointStyle: 'star', pointBackgroundColor: '#1565C0', showLine: false },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { filter: l => [meanLabel, index, 'Pronostico'].includes(l.text), font: { size: 10 } },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          ticks: {
+            font: { size: 10 },
+            callback: v => dayOffsetToDate(data.date0, v),
+          },
+          grid: { display: false },
+        },
+        y: {
+          ticks: { font: { size: 10 } },
+          grid: { color: '#f0f0ec' },
+          title: { display: true, text: index, font: { size: 10 } },
+        },
+      },
+    },
+  });
+}
+
+function dayOffsetToDate(date0, dayOffset) {
+  const d = new Date(date0 + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + Math.round(dayOffset));
+  return d.toISOString().slice(0, 7);   // YYYY-MM
 }
 
 /* ==============================================================
