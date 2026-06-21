@@ -435,7 +435,9 @@ function initTrend() {
   if (calcBtn) calcBtn.addEventListener('click', calcTrend);
   if (parcelSelect) {
     parcelSelect.addEventListener('change', updateTrendCalcState);
-    parcelSelect.addEventListener('focus', ensureTrendParcelsLoaded);
+    ['focus', 'mousedown', 'click'].forEach(eventName => {
+      parcelSelect.addEventListener(eventName, ensureTrendParcelsLoaded);
+    });
   }
   document.querySelectorAll('.view-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {

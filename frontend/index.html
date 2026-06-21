@@ -275,7 +275,9 @@
         <div class="trend-controls">
           <div class="form-group">
             <label for="trend-parcel">Parcela</label>
-            <select id="trend-parcel"></select>
+            <select id="trend-parcel" disabled>
+              <option value="">Cargando parcelas...</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="trend-index">Indice</label>
@@ -287,7 +289,7 @@
               <option value="EVI">EVI</option>
             </select>
           </div>
-          <button class="btn btn-primary" id="btn-trend-calc">Calcular tendencia</button>
+          <button class="btn btn-primary" id="btn-trend-calc" disabled>Calcular tendencia</button>
         </div>
 
         <p class="form-note">
@@ -401,6 +403,6 @@
   <!-- -- Scripts ---------------------------------------------- -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=trend-selector-20260621"></script>
 </body>
 </html>
