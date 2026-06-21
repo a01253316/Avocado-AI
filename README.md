@@ -245,6 +245,7 @@ En la pestaña `SAM2`:
 
 - `Analizar todo` genera máscaras pixeladas para las parcelas cargadas
 - `Ajustar overlap` compacta más los bounds y resuelve píxeles solapados por mayoría entre máscaras calibradas
+- `Ajuste GP + MLE` recalibra las máscaras con el z-score del Gaussian Process ajustado por máxima verosimilitud, usando grupo de terreno si está disponible
 - Los filtros de `Píxeles visibles` muestran u ocultan clases del raster final
 - Los filtros de `Diagnóstico Sentinel` controlan qué parcelas aportan máscaras al raster según su clase de análisis
 - Los filtros de `Coordenadas visibles` controlan qué puntos del mapa se muestran, sin afectar el raster

@@ -114,6 +114,12 @@ html, body {
   border-radius: var(--radius);
 }
 .btn-primary:hover:not(:disabled) { background: var(--green-dark); }
+.btn-primary.active {
+  background: #1565C0;
+}
+.btn-primary.active:hover:not(:disabled) {
+  background: #0D47A1;
+}
 
 /* Dot filter buttons */
 .btn-dot {

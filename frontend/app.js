@@ -38,6 +38,9 @@ let sam2AnalysisVisible = { 0: true, 1: true, 2: true };
 let sam2MarkerVisible = { 0: true, 1: true, 2: true, pending: true };
 let sam2HiddenParcels = new Set();
 let sam2AdjustedOverlap = false;
+let sam2GpMleAdjusted = false;
+let sam2GpMleLoading = false;
+let sam2GpMleEstimates = {};  // parcel_id -> /parcels/{id}/trend response
 let parcels  = [];   // all parcels from /parcels
 let parcelsLoading = null;
 let photoB64 = null;
@@ -706,6 +709,7 @@ function initSam2() {
   const refreshBtn = document.getElementById('btn-sam2-refresh');
   const scanBtn = document.getElementById('btn-sam2-scan-all');
   const overlapBtn = document.getElementById('btn-sam2-adjust-overlap');
+  const gpMleBtn = document.getElementById('btn-sam2-gp-mle');
   if (refreshBtn) refreshBtn.addEventListener('click', renderSam2View);
   if (scanBtn) scanBtn.addEventListener('click', scanSam2All);
   if (overlapBtn) {
@@ -715,6 +719,10 @@ function initSam2() {
       renderSam2View();
     });
     updateSam2OverlapButton();
+  }
+  if (gpMleBtn) {
+    gpMleBtn.addEventListener('click', toggleSam2GpMleAdjustment);
+    updateSam2GpMleButton();
   }
   if (map) {
     map.on('moveend zoomend', () => {
@@ -758,7 +766,7 @@ function renderSam2View() {
   parcels.forEach(parcel => {
     const data = results[parcel.parcel_id];
     const mask = sam2Masks[parcel.parcel_id];
-    const cls = data?.stress?.class ?? null;
+    const cls = parcelStressClass(parcel);
     const color = COLOR[cls];
 
     if (sam2HiddenParcels.has(parcel.parcel_id)) return;
@@ -804,12 +812,15 @@ function renderSam2View() {
   setText('sam2-green', compactNumber(counts[0]));
   setText('sam2-yellow', compactNumber(counts[1]));
   setText('sam2-red', compactNumber(counts[2]));
-  setText('sam2-meta', `${visibleMaskCount} mascaras pixel visibles${sam2AdjustedOverlap ? ' - overlap ajustado' : ''}`);
+  const sam2MetaParts = [`${visibleMaskCount} mascaras pixel visibles`];
+  if (sam2AdjustedOverlap) sam2MetaParts.push('overlap ajustado');
+  if (sam2GpMleAdjusted) sam2MetaParts.push('GP + MLE');
+  setText('sam2-meta', sam2MetaParts.join(' - '));
 
   const status = document.getElementById('sam2-status');
   if (status) {
     status.textContent = visibleMaskCount
-      ? 'Raster pixel activo sobre el mapa'
+      ? `Raster pixel activo sobre el mapa${sam2GpMleAdjusted ? ' - calibrado con GP + MLE' : ''}`
       : totalMaskCount
         ? 'No hay mascaras visibles con los filtros actuales'
         : 'Genera mascaras para activar el raster';
@@ -850,6 +861,81 @@ async function scanSam2All() {
   scanning = false;
   renderSam2View();
   showToast(`SAM2 actualizado: ${done} parcelas listas`, 'success');
+}
+
+async function toggleSam2GpMleAdjustment() {
+  if (sam2GpMleLoading) return;
+
+  if (sam2GpMleAdjusted) {
+    sam2GpMleAdjusted = false;
+    updateSam2GpMleButton();
+    refreshSam2MarkerVisibility();
+    renderSam2View();
+    showToast('Ajuste GP + MLE desactivado', 'info');
+    return;
+  }
+
+  sam2GpMleLoading = true;
+  updateSam2GpMleButton('Calculando...');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'scan-overlay';
+  document.querySelector('.map-container').appendChild(overlay);
+
+  const candidates = sam2GpMleCandidates();
+  let done = 0;
+  let ok = 0;
+
+  try {
+    for (const parcel of candidates) {
+      overlay.textContent = `GP + MLE ${done + 1}/${candidates.length} - ${parcel.parcel_id}`;
+      const estimate = await loadSam2GpMleEstimate(parcel.parcel_id);
+      if (estimate) ok++;
+      done++;
+      if (done % 5 === 0) renderSam2View();
+      await sleep(25);
+    }
+
+    sam2GpMleAdjusted = ok > 0;
+    refreshSam2MarkerVisibility();
+    renderSam2View();
+    showToast(
+      ok
+        ? `Ajuste GP + MLE activo: ${ok} parcelas calibradas`
+        : 'No se pudieron obtener estimaciones GP + MLE',
+      ok ? 'success' : 'error',
+    );
+  } finally {
+    overlay.remove();
+    sam2GpMleLoading = false;
+    updateSam2GpMleButton();
+  }
+}
+
+function sam2GpMleCandidates() {
+  const active = parcels.filter(p => sam2Masks[p.parcel_id] || results[p.parcel_id]);
+  return active.length ? active : parcels;
+}
+
+async function loadSam2GpMleEstimate(parcelId) {
+  if (sam2GpMleEstimates[parcelId]) return sam2GpMleEstimates[parcelId];
+
+  try {
+    const res = await fetch(`${API}/parcels/${encodeURIComponent(parcelId)}/trend?index=NDMI&horizon=5`);
+    const data = await readJsonOrThrow(res);
+    sam2GpMleEstimates[parcelId] = data;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function updateSam2GpMleButton(label = null) {
+  const btn = document.getElementById('btn-sam2-gp-mle');
+  if (!btn) return;
+  btn.disabled = sam2GpMleLoading;
+  btn.classList.toggle('active', sam2GpMleAdjusted);
+  btn.textContent = label || (sam2GpMleAdjusted ? 'GP + MLE activo' : 'Ajuste GP + MLE');
 }
 
 function focusSam2Parcel(parcel) {
@@ -905,7 +991,8 @@ function resetSam2MarkerState() {
 }
 
 function sam2MarkerAllowed(parcelId) {
-  const cls = results[parcelId]?.stress?.class ?? null;
+  const parcel = parcels.find(p => p.parcel_id === parcelId);
+  const cls = parcel ? parcelStressClass(parcel) : (results[parcelId]?.stress?.class ?? null);
   const key = cls === null ? 'pending' : cls;
   return sam2MarkerVisible[key] !== false;
 }
@@ -944,10 +1031,11 @@ function renderSam2List() {
     .map(parcel => {
       const summary = summarizeMask(sam2Masks[parcel.parcel_id], parcelStressClass(parcel));
       const cls = summary.majority;
+      const gpMleText = sam2GpMleAdjusted ? gpMleTextForParcel(parcel.parcel_id) : '';
       return `
         <button type="button" class="sam2-row s${cls}" data-parcel="${parcel.parcel_id}">
           <span>${parcel.parcel_id}</span>
-          <strong>${summary.majorityPct}% ${SHORT_LABEL[cls]}</strong>
+          <strong>${summary.majorityPct}% ${SHORT_LABEL[cls]}${gpMleText ? ' · GP+MLE' : ''}</strong>
         </button>
       `;
     })
@@ -962,7 +1050,34 @@ function renderSam2List() {
 }
 
 function parcelStressClass(parcel) {
-  return results[parcel.parcel_id]?.stress?.class ?? null;
+  const fallbackClass = results[parcel.parcel_id]?.stress?.class ?? null;
+  if (!sam2GpMleAdjusted) return fallbackClass;
+  return gpMleClassForParcel(parcel.parcel_id) ?? fallbackClass;
+}
+
+function gpMleClassForParcel(parcelId) {
+  const estimate = sam2GpMleEstimates[parcelId];
+  if (!estimate || estimate.error) return null;
+
+  const block = estimate.group || estimate;
+  return {
+    sin_estres: 0,
+    moderado: 1,
+    severo: 2,
+  }[block.last_observation?.label] ?? null;
+}
+
+function gpMleTextForParcel(parcelId) {
+  const estimate = sam2GpMleEstimates[parcelId];
+  if (!estimate || estimate.error) return '';
+
+  const block = estimate.group || estimate;
+  const label = block.last_observation?.label;
+  const z = block.last_observation?.z;
+  const basis = estimate.group ? `grupo ${estimate.group.group_id}` : 'individual';
+  if (label == null || z == null) return '';
+
+  return `GP + MLE (${basis}): ${label.replace('_', ' ')} | z=${Number(z).toFixed(2)}`;
 }
 
 function sam2ParcelClassVisible(parcelClass) {
@@ -1060,8 +1175,9 @@ function compactSam2Bounds(bounds, parcel, scale) {
 }
 
 function sam2Tooltip(parcel, data) {
-  if (!data) return `<b>${parcel.parcel_id}</b><br>Sin analizar`;
-  return `<b>${parcel.parcel_id}</b><br>${data.stress.label}`;
+  const gpMleText = sam2GpMleAdjusted ? gpMleTextForParcel(parcel.parcel_id) : '';
+  if (!data) return `<b>${parcel.parcel_id}</b><br>${gpMleText || 'Sin analizar'}`;
+  return `<b>${parcel.parcel_id}</b><br>${data.stress.label}${gpMleText ? `<br>${gpMleText}` : ''}`;
 }
 
 function renderSam2Composite(items) {
