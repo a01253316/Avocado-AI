@@ -39,6 +39,7 @@ let sam2MarkerVisible = { 0: true, 1: true, 2: true, pending: true };
 let sam2HiddenParcels = new Set();
 let sam2AdjustedOverlap = false;
 let parcels  = [];   // all parcels from /parcels
+let parcelsLoading = null;
 let photoB64 = null;
 let photoMime = 'image/jpeg';
 let filterCls = null;   // null = show all
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initForm();
   initFilters();
   initTrend();
+  setTrendParcelSelectState('Cargando parcelas...');
   loadParcels();
 });
 
@@ -110,10 +112,17 @@ document.head.appendChild(rippleStyle);
    LOAD PARCELS
 ============================================================== */
 async function loadParcels() {
+  if (parcelsLoading) return parcelsLoading;
+  if (parcels.length) {
+    populateTrendParcelSelect();
+    return parcels;
+  }
+
+  parcelsLoading = (async () => {
   try {
     const res  = await fetch(`${API}/parcels?limit=200`);
     const data = await readJsonOrThrow(res);
-    parcels = data.parcels;
+    parcels = Array.isArray(data.parcels) ? data.parcels : [];
     document.getElementById('v-total').textContent = data.total;
     populateTrendParcelSelect();
 
@@ -127,9 +136,17 @@ async function loadParcels() {
     });
 
     showToast(`${data.total} parcelas cargadas`, 'success');
+    return parcels;
   } catch (e) {
+    setTrendParcelSelectState('No se pudieron cargar parcelas');
     showToast('No se pudo conectar con el backend: ' + e.message, 'error');
+    return [];
+  } finally {
+    parcelsLoading = null;
   }
+  })();
+
+  return parcelsLoading;
 }
 
 function onMarkerClick(p) {
@@ -360,16 +377,66 @@ const Z_LABEL = {
 function populateTrendParcelSelect() {
   const sel = document.getElementById('trend-parcel');
   if (!sel) return;
+
+  if (!parcels.length) {
+    setTrendParcelSelectState('Sin parcelas cargadas');
+    return;
+  }
+
+  const previousValue = sel.value;
   sel.innerHTML = parcels
-    .map(p => `<option value="${p.parcel_id}">${p.parcel_id} - ${p.state}</option>`)
+    .map(p => {
+      const id = escapeHtml(p.parcel_id);
+      const state = escapeHtml(p.state || 'Jalisco');
+      return `<option value="${id}">${id} - ${state}</option>`;
+    })
     .join('');
+  sel.disabled = false;
+
+  if (previousValue && parcels.some(p => p.parcel_id === previousValue)) {
+    sel.value = previousValue;
+  } else if (parcels[0]?.parcel_id) {
+    sel.value = parcels[0].parcel_id;
+  }
+
+  updateTrendCalcState();
+}
+
+function setTrendParcelSelectState(message) {
+  const sel = document.getElementById('trend-parcel');
+  if (!sel) return;
+  sel.innerHTML = `<option value="">${escapeHtml(message)}</option>`;
+  sel.disabled = true;
+  updateTrendCalcState();
+}
+
+function updateTrendCalcState() {
+  const sel = document.getElementById('trend-parcel');
+  const btn = document.getElementById('btn-trend-calc');
+  if (!sel || !btn) return;
+  btn.disabled = sel.disabled || !sel.value;
+}
+
+async function ensureTrendParcelsLoaded() {
+  if (parcels.length) {
+    populateTrendParcelSelect();
+    return;
+  }
+  setTrendParcelSelectState('Cargando parcelas...');
+  await loadParcels();
 }
 
 let lastTrendData = null;
 let trendView = 'individual';   // 'individual' | 'group'
 
 function initTrend() {
-  document.getElementById('btn-trend-calc').addEventListener('click', calcTrend);
+  const calcBtn = document.getElementById('btn-trend-calc');
+  const parcelSelect = document.getElementById('trend-parcel');
+  if (calcBtn) calcBtn.addEventListener('click', calcTrend);
+  if (parcelSelect) {
+    parcelSelect.addEventListener('change', updateTrendCalcState);
+    parcelSelect.addEventListener('focus', ensureTrendParcelsLoaded);
+  }
   document.querySelectorAll('.view-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.dataset.view === 'group' && !lastTrendData?.group) return;
@@ -401,6 +468,7 @@ async function calcTrend() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Calcular tendencia';
+    updateTrendCalcState();
   }
 }
 
@@ -619,6 +687,8 @@ function switchTab(name) {
   if (name === 'sam2') {
     refreshSam2MarkerVisibility();
     renderSam2View();
+  } else if (name === 'trend') {
+    ensureTrendParcelsLoaded();
   } else if (sam2Layer) {
     resetSam2MarkerState();
     sam2Layer.clearLayers();
@@ -1286,6 +1356,16 @@ function setFilterActive(cls) {
 ============================================================== */
 function fmt(v) {
   return (v != null && !isNaN(v)) ? (+v).toFixed(4) : '-';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
 }
 
 function showToast(msg, type = '') {

@@ -306,6 +306,7 @@ html, body {
   margin-bottom: 10px;
 }
 .form-group select {
+  width: 100%;
   border: 1.5px solid var(--border);
   border-radius: 8px; padding: 9px 12px;
   font-size: 13.5px; outline: none;
@@ -314,6 +315,10 @@ html, body {
   transition: border-color .14s;
 }
 .form-group select:focus { border-color: var(--green); background: #fff; }
+.form-group select:disabled {
+  color: var(--text-3);
+  cursor: wait;
+}
 #trend-result .section-label { margin-top: 14px; margin-bottom: 7px; display: block; }
 .view-toggle {
   display: flex; gap: 6px; margin-bottom: 10px;
