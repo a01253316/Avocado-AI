@@ -17,8 +17,9 @@ Combina imágenes Sentinel-2, modelos de ensemble, segmentación pixelada tipo S
 2. Extrae 5 índices espectrales (NDVI, NDWI, NDMI, NDRE, EVI) en ventanas deslizantes
 3. Predice el nivel de estrés hídrico con un modelo **E3 Stacking** (F1-macro = **0.8868**)
 4. Genera un reporte agronómico en español con Ollama/OpenLLaMA o Claude opcional
-5. Visualiza diagnósticos, tendencias y máscaras pixeladas en un **dashboard interactivo** con mapa Leaflet
-6. Prepara fine-tuning SAM2 con pseudo-máscaras NDMI generadas desde los parches Sentinel-2
+5. Resuelve coordenadas GPS contra el catálogo local de parcelas y calcula tendencia temporal NDMI/NDVI
+6. Visualiza diagnósticos, tendencias y máscaras pixeladas en un **dashboard interactivo** con mapa Leaflet
+7. Prepara fine-tuning SAM2 con pseudo-máscaras NDMI generadas desde los parches Sentinel-2
 
 ---
 
@@ -31,6 +32,8 @@ Combina imágenes Sentinel-2, modelos de ensemble, segmentación pixelada tipo S
 | Features         | 35 estadísticos × ventana de 24 fechas     |
 | Split            | GroupShuffleSplit por `parcel_id`          |
 | **F1-macro**     | **0.8868**                                 |
+
+Cada ventana temporal genera 35 features: `mean`, `std`, `min`, `max`, `p25`, `p75` y `trend` para cada uno de los 5 índices espectrales. El campo `trend` es la pendiente lineal de la ventana y permite capturar si el vigor/humedad de la parcela mejora o empeora antes del diagnóstico final.
 
 **Clases de estrés:**
 
@@ -199,6 +202,30 @@ make compute-indices
 make build-dataset
 make train-ensemble
 make dev
+```
+
+---
+
+## 📍 GPS y Tendencia Temporal
+
+La rama `task/experiment-gp-terrain-trend` queda documentada como soporte de análisis por coordenadas GPS y tendencia temporal:
+
+- `api/sentinel.py` carga el catálogo local de parcelas y resuelve una coordenada GPS a la parcela Sentinel-2 más cercana con distancia en kilómetros.
+- `api/features.py` calcula ventanas recientes de tendencia con promedios NDMI/NDVI y estadísticos por ventana, incluyendo la pendiente lineal `trend`.
+- `api/main.py` expone `direction` (`ascendente`, `estable`, `descendente`, `sin_datos`) y `worsening_alert` dentro de la respuesta `trend`.
+- `api/llm.py` incorpora la secuencia de estados y NDMI medio en el prompt agronómico para explicar si el estrés está empeorando o estabilizándose.
+- El dashboard muestra la dirección de tendencia, la gráfica temporal y el diagnóstico por parcela o por coordenadas ingresadas manualmente.
+
+Campos principales en la respuesta:
+
+```json
+"trend": {
+  "windows": [
+    { "label": "Moderado", "ndmi_mean": 0.1823, "ndvi_mean": 0.6102 }
+  ],
+  "direction": "descendente",
+  "worsening_alert": true
+}
 ```
 
 ---
