@@ -33,6 +33,7 @@ from .features import (
 from .llm import generate_report
 from .predictor import get_predictor
 from .sentinel import LocalCatalog
+from .trend import compute_trend
 
 try:
     import anthropic
@@ -305,6 +306,37 @@ def analyze_parcel(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/parcels/{parcel_id}/trend", tags=["Tendencias"])
+def parcel_trend(
+    parcel_id: str,
+    settings: Settings = Depends(get_settings),
+    index:    str = Query("NDMI", pattern="^(NDVI|NDWI|NDMI|NDRE|EVI)$"),
+    horizon:  int = Query(5, ge=1, le=30, description="Dias a pronosticar"),
+):
+    """
+    Tendencia y pronostico por Gaussian Process para una parcela
+    (Experimento D - ver EXPERIMENTO_D_GAUSSIAN_PROCESS.md).
+
+    Ajusta un GP sobre la serie historica del indice elegido y devuelve la
+    curva (media +- std), el pronostico a `horizon` dias, y un z-score de
+    la ultima observacion respecto a lo esperado por el GP para esa
+    parcela. Si hay agrupacion por terreno disponible
+    (data/datasets/terrain_groups.json), incluye tambien el bloque "group"
+    con el mismo calculo a nivel de grupo de parcelas con terreno similar.
+    """
+    try:
+        return compute_trend(
+            parcel_id=parcel_id,
+            signals_dir=settings.abs(settings.signals_dir),
+            normalizer_path=settings.abs(settings.gp_normalizer_path),
+            index_name=index,
+            horizon_days=horizon,
+            groups_json=settings.abs(settings.terrain_groups_path),
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/sam2/mask/{parcel_id}", response_model=Sam2MaskResponse, tags=["Segmentacion"])

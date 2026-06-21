@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     parcelas_csv: str  = "notebooks/processed/parcelas.csv"
     norm_path:    str  = "models/ensemble_meta.json"
 
+    # Experimento D (Gaussian Process por parcela / por grupo de terreno).
+    # gp_normalizer_path es DISTINTO de norm_path: este apunta al archivo
+    # con min/max reales por indice (data/datasets/normalizer_stats.json),
+    # no a ensemble_meta.json (que ya tiene otro uso: t_mod/t_sev).
+    signals_dir:         str = "data/datasets/signals"
+    gp_normalizer_path:  str = "data/datasets/normalizer_stats.json"
+    terrain_groups_path: str = "data/datasets/terrain_groups.json"
+
     # ── CDSE (Copernicus) — para futura integración real-time ───
     cdse_user:     str = ""
     cdse_password: str = ""
