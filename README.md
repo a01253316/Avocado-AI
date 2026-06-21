@@ -228,6 +228,33 @@ Campos principales en la respuesta:
 }
 ```
 
+### Umbrales probabilísticos con GP + MLE
+
+El Experimento D añade una capa de calibración estadística para que los umbrales de estrés no sean fijos ni globales. Para cada parcela, o para su grupo de terreno si existe `data/datasets/terrain_groups.json`, se ajusta un `GaussianProcessRegressor` sobre el historial del índice elegido, normalmente NDMI.
+
+El GP estima para cada fecha:
+
+```text
+mu(t)    = valor esperado del índice
+sigma(t) = incertidumbre esperada
+```
+
+Los hiperparámetros del kernel se ajustan por máxima verosimilitud marginal, es decir, el modelo busca la curva y el nivel de ruido que hacen más probable el historial observado. La última observación se transforma a un z-score:
+
+```text
+z = (mu(t) - valor_observado) / sigma(t)
+```
+
+Clasificación usada por el dashboard:
+
+| z-score GP/MLE | Clase |
+|----------------|-------|
+| `z < 1`        | Sin estrés |
+| `1 <= z < 2`   | Moderado |
+| `z >= 2`       | Severo |
+
+En la pestaña `SAM2`, el botón `Ajuste GP + MLE` consulta `GET /parcels/{parcel_id}/trend?index=NDMI&horizon=5` y recalibra tanto la máscara pixelada como el color del centroide de la parcela con esta clase probabilística. Si existe estimación de grupo de terreno, usa esa referencia; si no, usa el GP individual de la parcela; si falla la estimación, conserva el diagnóstico ML original.
+
 ---
 
 ## 🗺️ Dashboard
@@ -245,7 +272,7 @@ En la pestaña `SAM2`:
 
 - `Analizar todo` genera máscaras pixeladas para las parcelas cargadas
 - `Ajustar overlap` compacta más los bounds y resuelve píxeles solapados por mayoría entre máscaras calibradas
-- `Ajuste GP + MLE` recalibra las máscaras con el z-score del Gaussian Process ajustado por máxima verosimilitud, usando grupo de terreno si está disponible
+- `Ajuste GP + MLE` recalibra las máscaras y los centroides del mapa con el z-score del Gaussian Process ajustado por máxima verosimilitud, usando grupo de terreno si está disponible
 - Los filtros de `Píxeles visibles` muestran u ocultan clases del raster final
 - Los filtros de `Diagnóstico Sentinel` controlan qué parcelas aportan máscaras al raster según su clase de análisis
 - Los filtros de `Coordenadas visibles` controlan qué puntos del mapa se muestran, sin afectar el raster

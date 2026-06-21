@@ -609,13 +609,24 @@ function updateStats() {
 }
 
 function setMarkerClass(parcelId, cls) {
-  if (markers[parcelId]) markers[parcelId].setIcon(makeIcon(cls));
+  if (markers[parcelId]) markers[parcelId].setIcon(makeIcon(markerClassForParcelId(parcelId, cls)));
+}
+
+function markerClassForParcelId(parcelId, fallbackClass = null) {
+  if (sam2GpMleAdjusted) {
+    const gpMleClass = gpMleClassForParcel(parcelId);
+    if (gpMleClass !== null) return gpMleClass;
+  }
+  return fallbackClass ?? results[parcelId]?.stress?.class ?? null;
+}
+
+function syncMarkerIcons() {
+  Object.keys(markers).forEach(parcelId => setMarkerClass(parcelId));
 }
 
 function applyFilter() {
   Object.entries(markers).forEach(([id, m]) => {
-    const res = results[id];
-    const cls = res ? res.stress.class : null;
+    const cls = markerClassForParcelId(id);
     if (filterCls === null || cls === null || cls === filterCls) {
       if (!map.hasLayer(m)) map.addLayer(m);
     } else {
@@ -869,6 +880,7 @@ async function toggleSam2GpMleAdjustment() {
   if (sam2GpMleAdjusted) {
     sam2GpMleAdjusted = false;
     updateSam2GpMleButton();
+    syncMarkerIcons();
     refreshSam2MarkerVisibility();
     renderSam2View();
     showToast('Ajuste GP + MLE desactivado', 'info');
@@ -897,6 +909,7 @@ async function toggleSam2GpMleAdjustment() {
     }
 
     sam2GpMleAdjusted = ok > 0;
+    syncMarkerIcons();
     refreshSam2MarkerVisibility();
     renderSam2View();
     showToast(
@@ -977,6 +990,7 @@ function setSam2MarkerOpacity(parcelId, opacity) {
 
 function refreshSam2MarkerVisibility() {
   Object.entries(markers).forEach(([parcelId, marker]) => {
+    setMarkerClass(parcelId);
     if (sam2MarkerAllowed(parcelId)) {
       if (!map.hasLayer(marker)) map.addLayer(marker);
       setSam2MarkerOpacity(parcelId, sam2HiddenParcels.has(parcelId) ? 0.35 : 1);
