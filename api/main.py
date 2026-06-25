@@ -30,7 +30,7 @@ from .features import (
     extract_trend_windows,
     load_thresholds,
 )
-from .llm import generate_report
+from .llm import generate_report, generate_trend_recommendation
 from .predictor import get_predictor
 from .sentinel import LocalCatalog
 from .trend import compute_trend
@@ -93,6 +93,16 @@ class Sam2MaskResponse(BaseModel):
     source: str
     window_size: int
     latest_date: Optional[str] = None
+
+
+class TrendRecommendRequest(BaseModel):
+    index:   str = Field("NDMI", pattern="^(NDVI|NDWI|NDMI|NDRE|EVI)$")
+    horizon: int = Field(5, ge=1, le=30, description="Dias a pronosticar")
+    photo_b64: Optional[str] = Field(
+        None,
+        description="Foto del campo en base64 (JPEG/PNG). Activa analisis visual.",
+    )
+    photo_mime: str = Field("image/jpeg", description="MIME type de la foto")
 
 
 # -- Dependencias -------------------------------------------------------------
@@ -337,6 +347,108 @@ def parcel_trend(
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/parcels/{parcel_id}/likelihood", tags=["Experimento E - Verosimilitud"])
+def parcel_likelihood(
+    parcel_id: str,
+    settings: Settings = Depends(get_settings),
+):
+    """
+    Diagnostico de estres hidrico por verosimilitud neuronal (Experimento E).
+
+    Una red Transformer estima la distribucion Gaussiana esperada (mu, sigma)
+    de los 5 indices espectrales condicionada a la huella espectral historica
+    de la parcela, el historial reciente de indices (ultimas 24 observaciones)
+    y el dia del año (estacionalidad). La clasificacion de estres se obtiene
+    del percentil que ocupa la observacion actual en esa distribucion (CDF
+    multivariada). No usa umbral fijo.
+    """
+    from .likelihood_predictor import get_likelihood_predictor
+
+    likelihood_path = settings.abs(settings.likelihood_model_path)
+    if not likelihood_path.exists():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Modelo de verosimilitud no encontrado. "
+                "Ejecuta: python scripts/train_save_likelihood_nn.py  (o make train-likelihood)"
+            ),
+        )
+
+    signals_path = settings.abs(settings.signals_dir) / f"{parcel_id}.npz"
+    if not signals_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parcela '{parcel_id}' no encontrada")
+
+    npz    = np.load(signals_path, allow_pickle=True)
+    data   = npz["data"].astype(np.float32)    # (T, 5)
+    doy    = npz["doy"].astype(np.float32)     # (T,)
+    dates  = npz["dates"]                       # (T,)
+
+    window_size = 24
+    if len(data) < window_size + 1:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La parcela '{parcel_id}' tiene solo {len(data)} observaciones (minimo {window_size + 1})",
+        )
+
+    x_hist   = data[-(window_size + 1) : -1]
+    y_obs    = data[-1]
+    x_static = data.mean(axis=0)
+    target_doy = int(doy[-1])
+
+    try:
+        predictor = get_likelihood_predictor(str(likelihood_path))
+        result = predictor.predict_with_doy(x_hist, x_static, y_obs, target_doy)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en inferencia: {e}")
+
+    return {
+        "parcel_id":        parcel_id,
+        "last_date":        str(dates[-1]),
+        "doy":              target_doy,
+        "stress":           result,
+        "indices_observed": {
+            ch: round(float(y_obs[i]), 4)
+            for i, ch in enumerate(["NDVI", "NDWI", "NDMI", "NDRE", "EVI"])
+        },
+        "experiment": "E - Red Neuronal Probabilistica (Transformer + Gaussian NLL)",
+    }
+
+
+@app.post("/parcels/{parcel_id}/trend/recommend", tags=["Tendencias"])
+def parcel_trend_recommend(
+    parcel_id: str,
+    req: TrendRecommendRequest,
+    settings: Settings            = Depends(get_settings),
+    claude_c: Optional[Any]       = Depends(get_anthropic),
+):
+    """
+    Pronostico GP mas recomendacion de manejo generada por LLM
+    (acepta foto opcional del campo).
+    """
+    try:
+        trend_data = compute_trend(
+            parcel_id=parcel_id,
+            signals_dir=settings.abs(settings.signals_dir),
+            normalizer_path=settings.abs(settings.gp_normalizer_path),
+            index_name=req.index,
+            horizon_days=req.horizon,
+            groups_json=settings.abs(settings.terrain_groups_path),
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    llm_report = generate_trend_recommendation(
+        client=claude_c,
+        model=settings.anthropic_model,
+        trend_data=trend_data,
+        parcel_id=parcel_id,
+        photo_b64=req.photo_b64,
+        photo_mime=req.photo_mime,
+    )
+
+    return {**trend_data, "llm_report": llm_report}
 
 
 @app.get("/sam2/mask/{parcel_id}", response_model=Sam2MaskResponse, tags=["Segmentacion"])

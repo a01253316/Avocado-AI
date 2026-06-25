@@ -29,7 +29,7 @@ const LABEL = { 0: ' Sin estres', 1: ' Estres moderado', 2: ' Estres severo' };
 const SHORT_LABEL = { 0: 'sin estres', 1: 'moderado', 2: 'severo' };
 
 /* -- State ---------------------------------------------------- */
-let map, trendChart, sam2Layer, gpChart;
+let map, trendChart, sam2Layer, gpChart, lkChart;
 let markers  = {};   // parcel_id -> Leaflet marker
 let results  = {};   // parcel_id -> analysis result
 let sam2Masks = {};  // parcel_id -> pixel mask result
@@ -437,11 +437,19 @@ function initTrend() {
   const parcelSelect = document.getElementById('trend-parcel');
   if (calcBtn) calcBtn.addEventListener('click', calcTrend);
   if (parcelSelect) {
-    parcelSelect.addEventListener('change', updateTrendCalcState);
+    parcelSelect.addEventListener('change', () => {
+      updateTrendCalcState();
+      // Mostrar seccion Exp E al seleccionar parcela - independiente del GP
+      document.getElementById('exp-e-section').classList.remove('hidden');
+      document.getElementById('likelihood-result').classList.add('hidden');
+      if (lkChart) { lkChart.destroy(); lkChart = null; }
+    });
     ['focus', 'mousedown', 'click'].forEach(eventName => {
       parcelSelect.addEventListener(eventName, ensureTrendParcelsLoaded);
     });
   }
+  const lkBtn = document.getElementById('btn-likelihood');
+  if (lkBtn) lkBtn.addEventListener('click', calcLikelihood);
   document.querySelectorAll('.view-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.dataset.view === 'group' && !lastTrendData?.group) return;
@@ -480,6 +488,10 @@ async function calcTrend() {
 function renderTrendResult(data) {
   document.getElementById('trend-empty').classList.add('hidden');
   document.getElementById('trend-result').classList.remove('hidden');
+  // Exp E siempre visible al tener una parcela activa
+  document.getElementById('exp-e-section').classList.remove('hidden');
+  document.getElementById('likelihood-result').classList.add('hidden');
+  if (lkChart) { lkChart.destroy(); lkChart = null; }
 
   lastTrendData = data;
   trendView = 'individual';
@@ -1481,6 +1493,137 @@ function setFilterActive(cls) {
   [0, 1, 2].forEach(c =>
     document.getElementById(`btn-filter-${c}`).classList.toggle('active', c === cls)
   );
+}
+
+/* ==============================================================
+   LIKELIHOOD (Experimento E -- Red Neuronal Probabilistica)
+============================================================== */
+const LK_INDEX_ORDER = ['NDVI', 'NDWI', 'NDMI', 'NDRE', 'EVI'];
+
+async function calcLikelihood() {
+  const parcelId = document.getElementById('trend-parcel').value;
+  if (!parcelId) {
+    showToast('Selecciona una parcela primero', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-likelihood');
+  btn.disabled = true;
+  btn.textContent = 'Calculando...';
+
+  try {
+    const res = await fetch(`${API}/parcels/${parcelId}/likelihood`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 503) {
+        showToast('Modelo no entrenado aun -- ejecuta: make train-likelihood', 'error');
+        return;
+      }
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    renderLikelihoodResult(data);
+  } catch (e) {
+    showToast(`Error al calcular verosimilitud: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Calcular verosimilitud';
+  }
+}
+
+function renderLikelihoodResult(data) {
+  const { stress } = data;
+  const cls = stress.stress_class;
+  const pct = stress.likelihood_percentile;
+
+  document.getElementById('likelihood-result').classList.remove('hidden');
+
+  const badge = document.getElementById('lk-badge');
+  badge.textContent = stress.stress_label;
+  badge.className   = `stress-badge s${cls}`;
+
+  document.getElementById('lk-pct-value').textContent = `${pct.toFixed(1)}%`;
+  const bar = document.getElementById('lk-pct-bar');
+  bar.style.width      = `${Math.min(pct, 100)}%`;
+  bar.style.background = COLOR[cls];
+
+  const grid = document.getElementById('lk-dist-grid');
+  grid.innerHTML = LK_INDEX_ORDER.map(idx => {
+    const d    = stress.distribution[idx];
+    const z    = d.z_score;
+    const zCls = z < -2 ? 'z-severe' : z < -1 ? 'z-moderate' : z > 1 ? 'z-high' : 'z-ok';
+    const zSign = z >= 0 ? '+' : '';
+    const key  = idx === 'NDMI';
+    return `<tr class="${key ? 'lk-key-row' : ''}">
+      <td class="lk-idx-name">${idx}${key ? ' <span class="idx-tag">clave</span>' : ''}</td>
+      <td class="lk-num">${d.observed.toFixed(4)}</td>
+      <td class="lk-num">${d.mu.toFixed(4)}</td>
+      <td class="lk-num lk-sigma">+/-${d.sigma.toFixed(4)}</td>
+      <td class="lk-num"><span class="lk-z ${zCls}">${zSign}${z.toFixed(3)}</span></td>
+    </tr>`;
+  }).join('');
+
+  renderLikelihoodChart(stress.distribution);
+}
+
+function renderLikelihoodChart(dist) {
+  if (lkChart) { lkChart.destroy(); lkChart = null; }
+
+  const labels  = LK_INDEX_ORDER;
+  const zScores = labels.map(k => dist[k].z_score);
+  const barColors = zScores.map(z =>
+    z < -2  ? 'rgba(198,40,40,.85)'  :
+    z < -1  ? 'rgba(249,168,37,.85)' :
+    z >= 0  ? 'rgba(56,142,60,.75)'  :
+              'rgba(56,142,60,.45)'
+  );
+
+  const ctx = document.getElementById('lk-chart').getContext('2d');
+  lkChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'z-score',
+        data: zScores,
+        backgroundColor: barColors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const z = ctx.raw;
+              const sign = z >= 0 ? '+' : '';
+              return `z = ${sign}${z.toFixed(3)}`;
+            },
+          },
+        },
+        annotation: {
+          annotations: {
+            line1pos: { type: 'line', yMin:  1, yMax:  1, borderColor: '#9E9E9E', borderWidth: 1, borderDash: [4,4] },
+            line1neg: { type: 'line', yMin: -1, yMax: -1, borderColor: '#9E9E9E', borderWidth: 1, borderDash: [4,4] },
+            line2pos: { type: 'line', yMin:  2, yMax:  2, borderColor: '#757575', borderWidth: 1, borderDash: [2,3] },
+            line2neg: { type: 'line', yMin: -2, yMax: -2, borderColor: '#757575', borderWidth: 1, borderDash: [2,3] },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' } } },
+        y: {
+          grid: { color: '#f0f0ec' },
+          ticks: { font: { size: 10 } },
+          title: { display: true, text: 'desviaciones estandar (z)', font: { size: 10 } },
+        },
+      },
+    },
+  });
 }
 
 /* ==============================================================

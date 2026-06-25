@@ -26,9 +26,10 @@ class Settings(BaseSettings):
     # gp_normalizer_path es DISTINTO de norm_path: este apunta al archivo
     # con min/max reales por indice (data/datasets/normalizer_stats.json),
     # no a ensemble_meta.json (que ya tiene otro uso: t_mod/t_sev).
-    signals_dir:         str = "data/datasets/signals"
-    gp_normalizer_path:  str = "data/datasets/normalizer_stats.json"
-    terrain_groups_path: str = "data/datasets/terrain_groups.json"
+    signals_dir:          str = "data/datasets/signals"
+    gp_normalizer_path:   str = "data/datasets/normalizer_stats.json"
+    terrain_groups_path:  str = "data/datasets/terrain_groups.json"
+    likelihood_model_path: str = "models/stress_likelihood_net.pt"
 
     # ── CDSE (Copernicus) — para futura integración real-time ───
     cdse_user:     str = ""

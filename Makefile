@@ -151,6 +151,15 @@ train-cnn:
 	$(PYTHON) src/models/cnn/train_cnn.py
 	@echo "OK: Modelo guardado en models/best_pixel_cnn.pt"
 
+train-likelihood:
+	@echo "Entrenando StressLikelihoodNet (Experimento E - red probabilistica)..."
+	$(PYTHON) scripts/train_save_likelihood_nn.py \
+		--signals-dir data/datasets/signals \
+		--split-json  data/datasets/split.json \
+		--output-dir  models/ \
+		--epochs      60
+	@echo "OK: Modelo guardado en models/stress_likelihood_net.pt"
+
 train-vit:
 	@echo "Entrenando ViT for SITS (preset=$(VIT_PRESET))..."
 	$(PYTHON) src/models/vit/train_vit.py \

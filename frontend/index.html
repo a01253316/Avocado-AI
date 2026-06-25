@@ -342,6 +342,58 @@
           <p id="trend-forecast-text">-</p>
         </div>
 
+        <!-- -- Experimento E -- independiente del GP ------------ -->
+        <div class="hidden" id="exp-e-section">
+          <div class="lk-divider">
+            <span>Experimento E - Red Neuronal Probabilistica</span>
+          </div>
+          <p class="lk-desc">
+            Estima la distribucion esperada (mu +/- sigma) de los 5 indices usando un
+            Transformer entrenado por maxima verosimilitud Gaussiana. El estres
+            se clasifica por el percentil que ocupa la observacion en esa
+            distribucion - sin umbral fijo.
+          </p>
+          <button class="btn btn-outline lk-btn" id="btn-likelihood">
+            Calcular verosimilitud
+          </button>
+
+          <div class="hidden" id="likelihood-result">
+            <div class="lk-header">
+              <div class="stress-badge" id="lk-badge">-</div>
+              <div class="lk-pct-wrap">
+                <span class="conf-label">Percentil CDF multivariada</span>
+                <div class="progress-bar-wrap">
+                  <div class="progress-fill" id="lk-pct-bar" style="width:0%"></div>
+                </div>
+                <span class="conf-value" id="lk-pct-value">-</span>
+              </div>
+            </div>
+
+            <div class="section-label">z-score por indice</div>
+            <p class="lk-chart-note">
+              Barras negativas = por debajo de lo esperado - senal de estres.
+              Franjas grises: +/-1 sigma y +/-2 sigma.
+            </p>
+            <div class="chart-wrap">
+              <canvas id="lk-chart"></canvas>
+            </div>
+
+            <div class="section-label">Distribucion por indice (mu +/- sigma vs. observado)</div>
+            <table class="lk-table">
+              <thead>
+                <tr>
+                  <th>Indice</th>
+                  <th>Observado</th>
+                  <th>mu esperado</th>
+                  <th>+/- sigma</th>
+                  <th>z-score</th>
+                </tr>
+              </thead>
+              <tbody id="lk-dist-grid"></tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
 
       <!-- -- Tab: New location --------------------------------- -->
@@ -406,6 +458,7 @@
   <!-- -- Scripts ---------------------------------------------- -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=gp-mle-sam2-20260621"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+  <script src="app.js?v=gp-mle-sam2-exp-e-20260624"></script>
 </body>
 </html>
