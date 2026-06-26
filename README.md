@@ -19,7 +19,8 @@ Combina imágenes Sentinel-2, modelos de ensemble, segmentación pixelada tipo S
 4. Genera un reporte agronómico en español con Ollama/OpenLLaMA o Claude opcional
 5. Resuelve coordenadas GPS contra el catálogo local de parcelas y calcula tendencia temporal NDMI/NDVI
 6. Visualiza diagnósticos, tendencias y máscaras pixeladas en un **dashboard interactivo** con mapa Leaflet
-7. Prepara fine-tuning SAM2 con pseudo-máscaras NDMI generadas desde los parches Sentinel-2
+7. Calcula verosimilitud probabilística por parcela con **StressLikelihoodNet** (Experimento E)
+8. Prepara fine-tuning SAM2 con pseudo-máscaras NDMI generadas desde los parches Sentinel-2
 
 ---
 
@@ -50,7 +51,7 @@ Cada ventana temporal genera 35 features: `mean`, `std`, `min`, `max`, `p25`, `p
 | Capa          | Tecnología                                              |
 |---------------|---------------------------------------------------------|
 | Datos         | Sentinel-2 (ESA / CDSE), parcelas en Jalisco           |
-| Modelo        | scikit-learn · XGBoost · joblib                        |
+| Modelo        | scikit-learn · XGBoost · joblib · PyTorch              |
 | Segmentación  | SAM2.1 tiny opcional · pseudo-máscaras NDMI            |
 | Backend       | FastAPI · Pydantic-Settings · Uvicorn                  |
 | LLM           | Ollama (`openllama` por defecto) · Claude opcional     |
@@ -68,14 +69,17 @@ integrative-project/
 |   |-- config.py                 # Settings (pydantic-settings + .env)
 |   |-- features.py               # Extracción de features y máscaras por parcela
 |   |-- predictor.py              # E3 Stacking inference (lru_cache)
+|   |-- likelihood_predictor.py   # Inferencia StressLikelihoodNet (Experimento E)
 |   |-- sentinel.py               # LocalCatalog de parcelas
 |   `-- llm.py                    # Reporte agronómico con Ollama/Claude
 |
 |-- frontend/                     # Dashboard web (servido en /ui)
 |-- src/                          # Ingesta, procesamiento y modelos entrenables
+|   `-- models/likelihood_nn/     # Red neuronal probabilística + entrenamiento
 |-- tests/                        # Tests unitarios
 |-- configs/                      # Configuración YAML
 |-- scripts/                      # Utilidades y scripts manuales
+|   `-- train_save_likelihood_nn.py
 |-- notebooks/                    # Notebooks de exploración, avances y salidas asociadas
 |
 |-- docs/
@@ -143,6 +147,14 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-opus-4-8
 ```
 
+El Experimento E usa por defecto el checkpoint generado localmente:
+
+```env
+LIKELIHOOD_MODEL_PATH=models/stress_likelihood_net.pt
+```
+
+Ese archivo no se versiona en Git. Se genera con `make train-likelihood` después de construir `data/datasets/signals/*.npz` y `data/datasets/split.json`.
+
 ### 3. Levantar el backend + dashboard
 
 ```powershell
@@ -176,12 +188,15 @@ Ese proceso crea los artefactos que usa el dashboard:
 ```text
 data/datasets/
   patches/*.npz
+  signals/*.npz
   normalizer_stats.json
+  split.json
 
 models/
   ensemble_stacking.joblib
   ensemble_scaler.joblib
   ensemble_meta.json
+  stress_likelihood_net.pt  # generado localmente por make train-likelihood
 ```
 
 Después entrena el modelo principal:
@@ -189,6 +204,14 @@ Después entrena el modelo principal:
 ```powershell
 make train-ensemble
 ```
+
+Para activar el diagnóstico probabilístico del Experimento E:
+
+```powershell
+make train-likelihood
+```
+
+Este comando entrena `StressLikelihoodNet` con `data/datasets/signals/*.npz` y `data/datasets/split.json`, y guarda `models/stress_likelihood_net.pt`.
 
 Flujo recomendado completo:
 
@@ -201,6 +224,7 @@ make download-sentinel2
 make compute-indices
 make build-dataset
 make train-ensemble
+make train-likelihood
 make dev
 ```
 
@@ -255,6 +279,44 @@ Clasificación usada por el dashboard:
 
 En la pestaña `SAM2`, el botón `Ajuste GP + MLE` consulta `GET /parcels/{parcel_id}/trend?index=NDMI&horizon=5` y recalibra tanto la máscara pixelada como el color del centroide de la parcela con esta clase probabilística. Si existe estimación de grupo de terreno, usa esa referencia; si no, usa el GP individual de la parcela; si falla la estimación, conserva el diagnóstico ML original.
 
+### Experimento E — Red Neuronal Probabilística
+
+El Experimento E añade `StressLikelihoodNet`, una red Transformer que aprende la distribución esperada de los 5 índices espectrales para cada parcela. No reemplaza al E3 Stacking: funciona como una capa adicional de evidencia para justificar el diagnóstico con verosimilitud.
+
+Entradas del modelo:
+
+| Entrada | Shape | Descripción |
+|---------|-------|-------------|
+| `x_hist` | `(24, 5)` | Historial reciente de índices normalizados |
+| `x_static` | `(5,)` | Huella espectral promedio de la parcela |
+| `doy` | scalar | Día del año de la observación objetivo |
+
+La red predice `mu` y `sigma` para NDVI, NDWI, NDMI, NDRE y EVI. Se entrena con Gaussian Negative Log-Likelihood, equivalente a ajustar los parámetros de la distribución por máxima verosimilitud.
+
+Clasificación usada por el endpoint:
+
+| Percentil de verosimilitud | Clase |
+|----------------------------|-------|
+| `< 25%`                    | Sin estrés |
+| `25% - 60%`                | Estrés moderado |
+| `>= 60%`                   | Estrés severo |
+
+El endpoint `GET /parcels/{parcel_id}/likelihood` carga `models/stress_likelihood_net.pt` con cache por proceso y devuelve `stress_class`, `likelihood_percentile`, `combined_z_score`, `mu`, `sigma`, observado y z-score por índice. Si el checkpoint no existe, responde `503` con la instrucción de ejecutar `make train-likelihood`.
+
+El entrenamiento se reproduce con:
+
+```powershell
+make train-likelihood
+```
+
+O directamente:
+
+```powershell
+python scripts/train_save_likelihood_nn.py --signals-dir data/datasets/signals --split-json data/datasets/split.json --output-dir models --epochs 60
+```
+
+El notebook `notebooks/03_experimento_e_likelihood_nn.ipynb` documenta el experimento completo.
+
 ---
 
 ## 🗺️ Dashboard
@@ -267,6 +329,7 @@ El dashboard permite a la cooperativa:
 - **Nueva ubicación** → ingresar lat/lon manualmente + foto del campo opcional para análisis multimodal
 - **Filtros** por nivel de estrés (sin estrés / moderado / severo)
 - **Vista SAM2** → capa raster pixel por pixel sobre el mapa usando máscaras calibradas por el diagnóstico Sentinel
+- **Tendencias** → compara el GP/MLE del Experimento D con la verosimilitud neuronal del Experimento E
 
 En la pestaña `SAM2`:
 
@@ -281,6 +344,13 @@ En la pestaña `SAM2`:
 - Las máscaras se calculan con `data/datasets/patches/<parcel_id>.npz` y `data/datasets/normalizer_stats.json`
 - Si los `.npz` incluyen `bounds_wgs84`, las máscaras se colocan con bounds reales de Sentinel-2
 - Regenera el dataset con `make build-dataset` para obtener `bounds_wgs84`
+
+En la pestaña `Tendencias`:
+
+- `Calcular tendencia` consulta `GET /parcels/{parcel_id}/trend` y muestra el GP individual o de grupo
+- `Recomendación IA` usa `POST /parcels/{parcel_id}/trend/recommend` para combinar tendencia, pronóstico y foto opcional del campo
+- `Calcular verosimilitud` consulta `GET /parcels/{parcel_id}/likelihood` y muestra percentil CDF, z-score combinado y tabla `mu ± sigma` vs. observado por índice
+- Si `models/stress_likelihood_net.pt` no existe, el panel muestra que el modelo no está entrenado y pide ejecutar `make train-likelihood`
 
 ---
 
@@ -336,6 +406,9 @@ Ese archivo queda fuera de GitHub.
 | GET    | `/parcels`            | Lista parcelas (`?limit=N`, máx 200)                  |
 | POST   | `/analyze`            | Diagnóstico por coordenadas GPS + foto opcional       |
 | POST   | `/analyze/parcel`     | Diagnóstico por `parcel_id` directo                   |
+| GET    | `/parcels/{parcel_id}/trend` | Tendencia GP/MLE y pronóstico por índice       |
+| POST   | `/parcels/{parcel_id}/trend/recommend` | Recomendación IA con tendencia y foto opcional |
+| GET    | `/parcels/{parcel_id}/likelihood` | Verosimilitud neuronal del Experimento E      |
 | GET    | `/sam2/mask/{parcel_id}` | Devuelve máscara pixelada por parcela              |
 | GET    | `/ui`                 | Dashboard web (Leaflet + Chart.js)                    |
 | GET    | `/docs`               | Swagger UI autogenerado                               |
@@ -411,6 +484,22 @@ ollama pull openllama
 ### El dashboard carga mapa pero no analiza parcelas
 
 El CSV de parcelas está disponible, pero faltan los `.npz` en `data/datasets/patches/`. Genera el dataset con `make build-dataset` después de preparar los índices.
+
+### `Modelo de verosimilitud no encontrado`
+
+El Experimento E necesita el checkpoint local:
+
+```text
+models/stress_likelihood_net.pt
+```
+
+Primero genera `data/datasets/signals/*.npz` y `data/datasets/split.json` con `make build-dataset`. Después entrena el modelo:
+
+```powershell
+make train-likelihood
+```
+
+Hasta que exista ese archivo, `GET /parcels/{parcel_id}/likelihood` responde `503` y el dashboard muestra que el modelo aún no está entrenado.
 
 ---
 
