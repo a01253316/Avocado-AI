@@ -10,6 +10,7 @@ Endpoints:
 from __future__ import annotations
 
 import base64
+import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -217,6 +218,55 @@ def _is_worsening(trend: list[dict]) -> bool:
     if len(trend) < 2:
         return False
     return trend[-1]["ndmi_mean"] < trend[0]["ndmi_mean"] - 0.02
+
+
+def _rounded_grid(values: np.ndarray, decimals: int = 4) -> list[list[float]]:
+    arr = np.nan_to_num(values.astype(float), nan=0.0, posinf=1.0, neginf=0.0)
+    return np.round(arr, decimals).tolist()
+
+
+def _rounded_series(values: np.ndarray, decimals: int = 4) -> list[float]:
+    arr = np.nan_to_num(values.astype(float), nan=0.0, posinf=0.0, neginf=0.0)
+    return np.round(arr, decimals).tolist()
+
+
+def _demo_feature_summary(window: np.ndarray) -> dict:
+    stats = ["mean", "std", "min", "max", "p25", "p75", "trend"]
+    t = np.arange(window.shape[0], dtype=np.float32)
+    out = {}
+    for i, ch in enumerate(CHANNEL_NAMES):
+        col = window[:, i]
+        slope = float(np.polyfit(t, col, 1)[0]) if len(col) > 1 else 0.0
+        out[ch] = {
+            "mean": round(float(np.mean(col)), 4),
+            "std": round(float(np.std(col)), 4),
+            "min": round(float(np.min(col)), 4),
+            "max": round(float(np.max(col)), 4),
+            "p25": round(float(np.percentile(col, 25)), 4),
+            "p75": round(float(np.percentile(col, 75)), 4),
+            "trend": round(slope, 5) if np.isfinite(slope) else 0.0,
+        }
+    return {"stats": stats, "by_index": out}
+
+
+def _demo_group_info(settings: Settings, parcel_id: str) -> dict | None:
+    groups_path = settings.abs(settings.terrain_groups_path)
+    if not groups_path.exists():
+        return None
+    try:
+        groups = json.loads(groups_path.read_text(encoding="utf-8"))
+        group_id = groups.get("parcel_to_group", {}).get(parcel_id)
+        if group_id is None:
+            return None
+        members = groups.get("groups", {}).get(str(group_id), [])
+        return {
+            "group_id": str(group_id),
+            "n_members": len(members),
+            "members_preview": members[:8],
+            "features": groups.get("features", []),
+        }
+    except Exception:
+        return None
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -449,6 +499,107 @@ def parcel_trend_recommend(
     )
 
     return {**trend_data, "llm_report": llm_report}
+
+
+@app.get("/demo/parcel/{parcel_id}", tags=["Demo"])
+def demo_parcel(
+    parcel_id: str,
+    settings: Settings = Depends(get_settings),
+    catalog: LocalCatalog = Depends(get_catalog),
+    thresholds: tuple = Depends(get_thresholds),
+):
+    """
+    Paquete liviano para la pestaña Demo.
+
+    Usa artefactos ya generados (.npz) y devuelve grids pequeños/series
+    temporales para que el frontend dibuje el flujo completo sin entrenar,
+    descargar ni guardar imágenes nuevas.
+    """
+    row = catalog._df[catalog._df["parcel_id"] == parcel_id]
+    if row.empty:
+        raise HTTPException(status_code=404, detail=f"Parcela '{parcel_id}' no encontrada")
+
+    patch_path = settings.abs(settings.patches_dir) / f"{parcel_id}.npz"
+    signal_path = settings.abs(settings.signals_dir) / f"{parcel_id}.npz"
+    if not patch_path.exists():
+        raise HTTPException(status_code=404, detail=f"No se encontro el parche .npz para {parcel_id}")
+    if not signal_path.exists():
+        raise HTTPException(status_code=404, detail=f"No se encontro la serie .npz para {parcel_id}")
+
+    t_mod, t_sev = thresholds
+    try:
+        patch_npz = np.load(patch_path, allow_pickle=True)
+        patch_data = patch_npz["data"].astype(np.float32)  # (T, C, H, W)
+        if patch_data.ndim != 4 or patch_data.shape[1] != len(CHANNEL_NAMES):
+            raise ValueError(f"Patch con forma inesperada: {patch_data.shape}")
+        if patch_data.shape[0] < WINDOW_SIZE:
+            raise ValueError(f"Serie muy corta: {patch_data.shape[0]} < {WINDOW_SIZE}")
+
+        signal_npz = np.load(signal_path, allow_pickle=True)
+        signal_data = signal_npz["data"].astype(np.float32)  # (T, C)
+        dates = [str(d) for d in signal_npz["dates"]]
+        latest_patch = patch_data[-1]
+        mask = build_ndmi_mask(patch_data, t_mod, t_sev)
+        window = signal_data[-WINDOW_SIZE:]
+
+        r = row.iloc[0]
+        indices = {}
+        for i, ch in enumerate(CHANNEL_NAMES):
+            indices[ch] = {
+                "grid": _rounded_grid(latest_patch[i]),
+                "latest_mean": round(float(np.mean(latest_patch[i])), 4),
+                "series": _rounded_series(signal_data[:, i]),
+            }
+
+        return {
+            "parcel_id": parcel_id,
+            "state": str(r.get("state", "Jalisco")),
+            "lat": round(float(r["latitude"]), 6),
+            "lon": round(float(r["longitude"]), 6),
+            "source": {
+                "satellite": "Sentinel-2 L2A",
+                "artifact": patch_path.as_posix(),
+                "signal_artifact": signal_path.as_posix(),
+                "n_dates": int(patch_data.shape[0]),
+                "date_min": dates[0],
+                "date_max": dates[-1],
+                "latest_date": dates[-1],
+                "shape": {
+                    "time": int(patch_data.shape[0]),
+                    "channels": int(patch_data.shape[1]),
+                    "height": int(patch_data.shape[2]),
+                    "width": int(patch_data.shape[3]),
+                },
+            },
+            "indices": indices,
+            "timeseries": {
+                "dates": dates,
+                "channels": CHANNEL_NAMES,
+            },
+            "features": {
+                "window_size": WINDOW_SIZE,
+                "n_features": len(CHANNEL_NAMES) * 7,
+                **_demo_feature_summary(window),
+            },
+            "mask": {
+                "width": int(mask.shape[1]),
+                "height": int(mask.shape[0]),
+                "classes": mask.tolist(),
+                "counts": {
+                    "sin_estres": int(np.sum(mask == 0)),
+                    "moderado": int(np.sum(mask == 1)),
+                    "severo": int(np.sum(mask == 2)),
+                    "sin_dato": int(np.sum(mask < 0)),
+                },
+                "thresholds": {
+                    "moderado": round(float(t_mod), 4),
+                    "severo": round(float(t_sev), 4),
+                },
+            },
+            "group": _demo_group_info(settings, parcel_id),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/sam2/mask/{parcel_id}", response_model=Sam2MaskResponse, tags=["Segmentacion"])

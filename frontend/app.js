@@ -30,6 +30,7 @@ const SHORT_LABEL = { 0: 'sin estres', 1: 'moderado', 2: 'severo' };
 
 /* -- State ---------------------------------------------------- */
 let map, trendChart, sam2Layer, gpChart, lkChart;
+let demoSeriesChart, demoProbChart, demoGpChart;
 let markers  = {};   // parcel_id -> Leaflet marker
 let results  = {};   // parcel_id -> analysis result
 let sam2Masks = {};  // parcel_id -> pixel mask result
@@ -56,7 +57,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initForm();
   initFilters();
   initTrend();
+  initDemo();
   setTrendParcelSelectState('Cargando parcelas...');
+  setDemoParcelSelectState('Cargando parcelas...');
   loadParcels();
 });
 
@@ -128,6 +131,7 @@ async function loadParcels() {
     parcels = Array.isArray(data.parcels) ? data.parcels : [];
     document.getElementById('v-total').textContent = data.total;
     populateTrendParcelSelect();
+    populateDemoParcelSelect();
 
     parcels.forEach(p => {
       const m = L.marker([p.latitude, p.longitude], { icon: makeIcon(null) }).addTo(map);
@@ -142,6 +146,7 @@ async function loadParcels() {
     return parcels;
   } catch (e) {
     setTrendParcelSelectState('No se pudieron cargar parcelas');
+    setDemoParcelSelectState('No se pudieron cargar parcelas');
     showToast('No se pudo conectar con el backend: ' + e.message, 'error');
     return [];
   } finally {
@@ -717,6 +722,13 @@ function switchTab(name) {
     renderSam2View();
   } else if (name === 'trend') {
     ensureTrendParcelsLoaded();
+  } else if (name === 'demo') {
+    if (sam2Layer) {
+      resetSam2MarkerState();
+      sam2Layer.clearLayers();
+      applyFilter();
+    }
+    ensureDemoLoaded();
   } else if (sam2Layer) {
     resetSam2MarkerState();
     sam2Layer.clearLayers();
@@ -1493,6 +1505,505 @@ function setFilterActive(cls) {
   [0, 1, 2].forEach(c =>
     document.getElementById(`btn-filter-${c}`).classList.toggle('active', c === cls)
   );
+}
+
+/* ==============================================================
+   DEMO GUIADA
+============================================================== */
+let demoLoadedParcel = null;
+
+const DEMO_INDEX_META = {
+  NDVI: {
+    title: 'NDVI',
+    bands: 'B08 NIR + B04 rojo',
+    meaning: 'Mide vigor vegetal: valores altos suelen indicar vegetacion sana y densa.',
+    palette: 'green',
+  },
+  NDWI: {
+    title: 'NDWI',
+    bands: 'B03 verde + B08 NIR',
+    meaning: 'Mide contenido de agua en vegetacion. Ayuda a detectar cambios de humedad.',
+    palette: 'blue',
+  },
+  NDMI: {
+    title: 'NDMI',
+    bands: 'B08 NIR + B11 SWIR',
+    meaning: 'Indice clave: estima humedad de hoja y dosel. Si baja, puede indicar estres hidrico.',
+    palette: 'teal',
+  },
+  NDRE: {
+    title: 'NDRE',
+    bands: 'B08 NIR + B05 red edge',
+    meaning: 'Observa clorofila y senales tempranas de estres antes de que sean visibles.',
+    palette: 'purple',
+  },
+  EVI: {
+    title: 'EVI',
+    bands: 'B08 NIR + B04 rojo + B02 azul',
+    meaning: 'Refuerza la lectura de vigor en vegetacion densa, donde NDVI puede saturarse.',
+    palette: 'orange',
+  },
+};
+
+const DEMO_TERMS = [
+  ['NDMI', 'Humedad del dosel', 'Indice principal para estres hidrico; usa NIR y SWIR para estimar agua en hoja/dosel.'],
+  ['NDVI', 'Vigor vegetal', 'Compara NIR y rojo para medir verdor y actividad fotosintetica general.'],
+  ['NDWI', 'Agua en vegetacion', 'Ayuda a observar contenido de agua y cambios hidricos en la cubierta vegetal.'],
+  ['NDRE', 'Clorofila temprana', 'Usa red edge para detectar estres antes de que cambie mucho el verdor visible.'],
+  ['EVI', 'Vigor en zonas densas', 'Indice de vegetacion mas estable cuando el dosel es muy cerrado.'],
+  ['GP', 'Gaussian Process', 'Modelo que aprende una curva esperada y una banda de incertidumbre para cada fecha.'],
+  ['MLE', 'Maxima verosimilitud', 'Ajuste que busca los parametros que hacen mas probable el historial observado.'],
+  ['z-score', 'Desviaciones estandar', 'Dice que tan lejos esta la observacion de lo esperado por el modelo.'],
+  ['Percentil', 'Posicion probabilistica', 'Convierte una senal estadistica a una escala interpretable de 0 a 100%.'],
+  ['SAM2', 'Segmentacion visual', 'Aqui se usa como vista pixelada/preliminar para ubicar estres dentro de la parcela.'],
+  ['E3 Stacking', 'Ensamble final', 'Combina Random Forest, XGBoost y SVM con una regresion logistica.'],
+  ['Verosimilitud', 'Probabilidad del dato', 'Mide que tan probable es observar los indices actuales bajo la distribucion esperada.'],
+];
+
+function initDemo() {
+  const btn = document.getElementById('btn-demo-load');
+  const sel = document.getElementById('demo-parcel');
+  if (btn) btn.addEventListener('click', () => loadDemoParcel());
+  if (sel) sel.addEventListener('change', () => updateDemoLoadState());
+  renderDemoGlossary();
+}
+
+function populateDemoParcelSelect() {
+  const sel = document.getElementById('demo-parcel');
+  if (!sel) return;
+
+  if (!parcels.length) {
+    setDemoParcelSelectState('Sin parcelas cargadas');
+    return;
+  }
+
+  const previousValue = sel.value;
+  sel.innerHTML = parcels
+    .map(p => {
+      const id = escapeHtml(p.parcel_id);
+      const state = escapeHtml(p.state || 'Jalisco');
+      return `<option value="${id}">${id} - ${state}</option>`;
+    })
+    .join('');
+  sel.disabled = false;
+
+  if (previousValue && parcels.some(p => p.parcel_id === previousValue)) {
+    sel.value = previousValue;
+  } else if (parcels.some(p => p.parcel_id === 'H1')) {
+    sel.value = 'H1';
+  } else if (parcels[0]?.parcel_id) {
+    sel.value = parcels[0].parcel_id;
+  }
+
+  updateDemoLoadState();
+}
+
+function setDemoParcelSelectState(message) {
+  const sel = document.getElementById('demo-parcel');
+  if (!sel) return;
+  sel.innerHTML = `<option value="">${escapeHtml(message)}</option>`;
+  sel.disabled = true;
+  updateDemoLoadState();
+}
+
+function updateDemoLoadState() {
+  const sel = document.getElementById('demo-parcel');
+  const btn = document.getElementById('btn-demo-load');
+  if (!sel || !btn) return;
+  btn.disabled = sel.disabled || !sel.value;
+}
+
+async function ensureDemoLoaded() {
+  if (!parcels.length) {
+    setDemoParcelSelectState('Cargando parcelas...');
+    await loadParcels();
+  } else {
+    populateDemoParcelSelect();
+  }
+  if (!demoLoadedParcel && document.getElementById('demo-parcel')?.value) {
+    await loadDemoParcel();
+  }
+}
+
+async function loadDemoParcel() {
+  const sel = document.getElementById('demo-parcel');
+  const btn = document.getElementById('btn-demo-load');
+  const parcelId = sel?.value;
+  if (!parcelId) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Cargando...';
+  setText('demo-status', 'Cargando artefactos locales y preparando visualizaciones...');
+
+  try {
+    const res = await fetch(`${API}/demo/parcel/${encodeURIComponent(parcelId)}`);
+    const demo = await readJsonOrThrow(res);
+    demoLoadedParcel = demo.parcel_id;
+    renderDemoBase(demo);
+
+    const [diagnosis, trend, likelihood] = await Promise.allSettled([
+      loadDemoDiagnosis(parcelId),
+      loadDemoTrend(parcelId),
+      loadDemoLikelihood(parcelId),
+    ]);
+    if (diagnosis.status === 'rejected') {
+      renderDemoDiagnosisError(diagnosis.reason);
+    }
+    if (trend.status === 'rejected') {
+      renderDemoTrendError(trend.reason);
+    }
+    if (likelihood.status === 'rejected') {
+      renderDemoLikelihoodMessage(`No se pudo calcular verosimilitud: ${likelihood.reason.message}`);
+    }
+
+    setText('demo-status', `Demo lista para ${demo.parcel_id}. Scroll hacia abajo para ver todo el analisis.`);
+  } catch (e) {
+    setText('demo-status', `No se pudo cargar la demo: ${e.message}`);
+    showToast(`Error demo: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Cargar ejemplo';
+  }
+}
+
+function renderDemoBase(demo) {
+  const src = demo.source;
+  setText('demo-source-name', src.satellite);
+  setText(
+    'demo-source-meta',
+    `${src.n_dates} observaciones | ${src.date_min} a ${src.date_max} | patch ${src.shape.height}x${src.shape.width}x${src.shape.channels}`,
+  );
+  setText(
+    'demo-composite-caption',
+    `Parcela ${demo.parcel_id}, fecha ${src.latest_date}. Composicion visual generada desde indices procesados.`,
+  );
+
+  drawCompositeCanvas('demo-composite', demo.indices);
+  renderDemoIndexGrid(demo);
+  renderDemoSeriesChart(demo);
+  renderDemoFeatures(demo);
+  drawMaskCanvas('demo-mask', demo.mask);
+  renderDemoMaskLegend(demo.mask);
+}
+
+function renderDemoIndexGrid(demo) {
+  const grid = document.getElementById('demo-index-grid');
+  grid.innerHTML = Object.entries(DEMO_INDEX_META).map(([key, meta]) => `
+    <div class="demo-index-card">
+      <div class="demo-index-head">
+        <strong>${meta.title}</strong>
+        <span>${meta.bands}</span>
+      </div>
+      <canvas id="demo-idx-${key}"></canvas>
+      <p>${meta.meaning}</p>
+    </div>
+  `).join('');
+
+  Object.entries(DEMO_INDEX_META).forEach(([key, meta]) => {
+    drawGridCanvas(`demo-idx-${key}`, demo.indices[key].grid, meta.palette);
+  });
+}
+
+function renderDemoSeriesChart(demo) {
+  const ctx = document.getElementById('demo-series-chart').getContext('2d');
+  if (demoSeriesChart) demoSeriesChart.destroy();
+
+  const labels = demo.timeseries.dates;
+  const colors = {
+    NDVI: '#388E3C',
+    NDWI: '#1565C0',
+    NDMI: '#00897B',
+    NDRE: '#6A1B9A',
+    EVI: '#EF6C00',
+  };
+
+  demoSeriesChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: Object.keys(DEMO_INDEX_META).map(key => ({
+        label: key,
+        data: demo.indices[key].series,
+        borderColor: colors[key],
+        borderWidth: key === 'NDMI' ? 2 : 1,
+        tension: .25,
+        pointRadius: 0,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+      scales: {
+        x: { ticks: { display: false }, grid: { display: false } },
+        y: { min: 0, max: 1, ticks: { font: { size: 10 } }, grid: { color: '#f0f0ec' } },
+      },
+    },
+  });
+}
+
+function renderDemoFeatures(demo) {
+  const el = document.getElementById('demo-feature-grid');
+  const features = demo.features.by_index;
+  el.innerHTML = ['NDMI', 'NDVI', 'NDWI', 'NDRE', 'EVI'].map(key => {
+    const f = features[key];
+    return `
+      <div class="demo-feature">
+        <strong>${key}</strong>
+        <span>media ${fmt(f.mean)} | std ${fmt(f.std)}</span>
+        <span>p25 ${fmt(f.p25)} | p75 ${fmt(f.p75)}</span>
+        <span>tendencia ${f.trend >= 0 ? '+' : ''}${f.trend}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadDemoDiagnosis(parcelId) {
+  const res = await fetch(`${API}/analyze/parcel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parcel_id: parcelId, skip_llm: true }),
+  });
+  const data = await readJsonOrThrow(res);
+  renderDemoDiagnosis(data);
+}
+
+function renderDemoDiagnosis(data) {
+  const stress = data.stress;
+  const el = document.getElementById('demo-diagnosis');
+  el.innerHTML = `
+    <div class="demo-diagnosis-card">
+      <span>Clase estimada</span>
+      <strong>${escapeHtml(stress.label)} (${Math.round(stress.confidence * 100)}%)</strong>
+    </div>
+    <div class="demo-diagnosis-card">
+      <span>Ventana temporal</span>
+      <strong>${data.n_dates} fechas disponibles</strong>
+    </div>
+  `;
+
+  const labels = ['Sin estres', 'Moderado', 'Severo'];
+  const probValues = Object.values(stress.probabilities || {});
+  const probs = labels.map((_, i) => Math.round(((probValues[i] ?? 0) || 0) * 100));
+  const ctx = document.getElementById('demo-prob-chart').getContext('2d');
+  if (demoProbChart) demoProbChart.destroy();
+  demoProbChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: probs,
+        backgroundColor: ['#388E3C', '#F9A825', '#C62828'],
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { min: 0, max: 100, ticks: { callback: v => `${v}%`, font: { size: 10 } } },
+      },
+    },
+  });
+}
+
+function renderDemoDiagnosisError(err) {
+  document.getElementById('demo-diagnosis').innerHTML = `
+    <div class="demo-mini-result">No se pudo calcular diagnostico: ${escapeHtml(err.message)}</div>
+  `;
+}
+
+async function loadDemoTrend(parcelId) {
+  const res = await fetch(`${API}/parcels/${encodeURIComponent(parcelId)}/trend?index=NDMI&horizon=5`);
+  const data = await readJsonOrThrow(res);
+  renderDemoTrend(data);
+}
+
+function renderDemoTrend(data) {
+  const ctx = document.getElementById('demo-gp-chart').getContext('2d');
+  if (demoGpChart) demoGpChart.destroy();
+  const historyPoints = data.history.days.map((day, i) => ({ x: day, y: data.history.values[i] }));
+  const gpPoints = data.gp_curve.days.map((day, i) => ({ x: day, y: data.gp_curve.mean[i] }));
+  demoGpChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Historial NDMI',
+          data: historyPoints,
+          borderColor: '#388E3C',
+          backgroundColor: '#388E3C',
+          pointRadius: 1.5,
+          showLine: false,
+        },
+        {
+          label: 'Media GP',
+          data: gpPoints,
+          borderColor: '#1565C0',
+          pointRadius: 0,
+          borderWidth: 2,
+          tension: .25,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+      scales: {
+        x: { type: 'linear', ticks: { display: false }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 } }, grid: { color: '#f0f0ec' } },
+      },
+    },
+  });
+
+  const last = data.last_observation;
+  const group = data.group
+    ? ` Grupo ${data.group.group_id}: ${data.group.n_members} parcelas similares.`
+    : ' Sin grupo de terreno disponible.';
+  setText(
+    'demo-gp-summary',
+    `Ultima observacion NDMI ${last.value} | z-score ${last.z} | clase ${last.label}.${group}`,
+  );
+}
+
+function renderDemoTrendError(err) {
+  setText('demo-gp-summary', `No se pudo calcular GP/MLE: ${err.message}`);
+}
+
+async function loadDemoLikelihood(parcelId) {
+  const res = await fetch(`${API}/parcels/${encodeURIComponent(parcelId)}/likelihood`);
+  if (res.status === 503) {
+    renderDemoLikelihoodMessage('Modelo no entrenado en este equipo. La demo conserva la explicacion: la red estima mu/sigma y calcula un percentil de verosimilitud.');
+    return;
+  }
+  const data = await readJsonOrThrow(res);
+  const stress = data.stress;
+  const ndmi = stress.distribution.NDMI;
+  renderDemoLikelihoodMessage(
+    `${stress.stress_label} | percentil ${stress.likelihood_percentile}% | z combinado ${stress.combined_z_score}. NDMI observado ${ndmi.observed}, esperado ${ndmi.mu} +/- ${ndmi.sigma}.`,
+  );
+}
+
+function renderDemoLikelihoodMessage(message) {
+  setText('demo-likelihood-summary', message);
+}
+
+function renderDemoMaskLegend(mask) {
+  const total = Math.max(1, mask.width * mask.height);
+  const items = [
+    ['Sin estres', mask.counts.sin_estres, '#388E3C'],
+    ['Moderado', mask.counts.moderado, '#F9A825'],
+    ['Severo', mask.counts.severo, '#C62828'],
+    ['Sin dato', mask.counts.sin_dato, '#9E9E9E'],
+  ];
+  document.getElementById('demo-mask-legend').innerHTML = items.map(([label, count, color]) => `
+    <span><b style="color:${color}">${label}</b>: ${Math.round((count / total) * 100)}%</span>
+  `).join('');
+}
+
+function renderDemoGlossary() {
+  const grid = document.getElementById('demo-term-grid');
+  if (!grid) return;
+  grid.innerHTML = DEMO_TERMS.map(([term, short, desc]) => `
+    <div class="demo-term-card">
+      <strong>${term} <em>${short}</em></strong>
+      <p>${desc}</p>
+    </div>
+  `).join('');
+}
+
+function drawCompositeCanvas(id, indices) {
+  const ndvi = indices.NDVI.grid;
+  const ndmi = indices.NDMI.grid;
+  const evi = indices.EVI.grid;
+  const ndwi = indices.NDWI.grid;
+  const canvas = document.getElementById(id);
+  const h = ndvi.length;
+  const w = ndvi[0].length;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const vigor = clamp01(ndvi[y][x]);
+      const moisture = clamp01(ndmi[y][x]);
+      const density = clamp01(evi[y][x]);
+      const water = clamp01(ndwi[y][x]);
+      img.data[idx] = Math.round(35 + density * 165);
+      img.data[idx + 1] = Math.round(45 + vigor * 195);
+      img.data[idx + 2] = Math.round(35 + moisture * 120 + water * 55);
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawGridCanvas(id, grid, palette) {
+  const canvas = document.getElementById(id);
+  const h = grid.length;
+  const w = grid[0].length;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const [r, g, b] = paletteColor(clamp01(grid[y][x]), palette);
+      img.data[idx] = r;
+      img.data[idx + 1] = g;
+      img.data[idx + 2] = b;
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawMaskCanvas(id, mask) {
+  const canvas = document.getElementById(id);
+  canvas.width = mask.width;
+  canvas.height = mask.height;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(mask.width, mask.height);
+  const colors = {
+    '-1': [158, 158, 158, 80],
+    0: [56, 142, 60, 210],
+    1: [249, 168, 37, 220],
+    2: [198, 40, 40, 235],
+  };
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      const idx = (y * mask.width + x) * 4;
+      const rgba = colors[mask.classes[y][x]] || colors['-1'];
+      img.data[idx] = rgba[0];
+      img.data[idx + 1] = rgba[1];
+      img.data[idx + 2] = rgba[2];
+      img.data[idx + 3] = rgba[3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function paletteColor(value, palette) {
+  const stops = {
+    green: [[244, 241, 198], [46, 125, 50]],
+    blue: [[232, 245, 255], [21, 101, 192]],
+    teal: [[232, 245, 233], [0, 121, 107]],
+    purple: [[246, 238, 249], [106, 27, 154]],
+    orange: [[255, 243, 224], [230, 81, 0]],
+  }[palette] || [[245, 245, 245], [40, 40, 40]];
+  return stops[0].map((c, i) => Math.round(c + (stops[1][i] - c) * value));
+}
+
+function clamp01(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
 }
 
 /* ==============================================================

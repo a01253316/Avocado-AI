@@ -64,6 +64,7 @@
         <button class="tab active" data-tab="parcel"> Diagnostico</button>
         <button class="tab" data-tab="sam2">SAM2</button>
         <button class="tab" data-tab="trend">Tendencias</button>
+        <button class="tab" data-tab="demo">Demo</button>
         <button class="tab" data-tab="new">+ Nueva ubicacion</button>
       </div>
 
@@ -394,6 +395,168 @@
           </div>
         </div>
 
+      </div>
+
+      <!-- -- Tab: Demo guided walkthrough ----------------------- -->
+      <div class="tab-content hidden" id="tab-demo">
+        <div class="demo-hero">
+          <span class="demo-kicker">Flujo completo</span>
+          <h2>Demo guiada de AguaVerde</h2>
+          <p>
+            Recorre el analisis completo con una parcela real ya procesada:
+            imagen Sentinel-2, indices, modelo, segmentacion, GP/MLE y verosimilitud.
+          </p>
+        </div>
+
+        <div class="demo-controls">
+          <div class="form-group">
+            <label for="demo-parcel">Parcela ejemplo</label>
+            <select id="demo-parcel" disabled>
+              <option value="">Cargando parcelas...</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="btn-demo-load" disabled>Cargar ejemplo</button>
+        </div>
+
+        <div class="demo-status" id="demo-status">Elige una parcela para iniciar la demo.</div>
+
+        <div class="demo-steps">
+          <section class="demo-step">
+            <div class="demo-step-num">1</div>
+            <div class="demo-step-body">
+              <h3>Descargar imagenes</h3>
+              <p>
+                En produccion se consultan imagenes Sentinel-2 L2A. Para esta demo usamos
+                un artefacto local ya generado, asi el panel puede ver el flujo sin esperar descargas.
+              </p>
+              <div class="demo-file-card">
+                <span>Fuente</span>
+                <strong id="demo-source-name">Sentinel-2 L2A</strong>
+                <small id="demo-source-meta">-</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">2</div>
+            <div class="demo-step-body">
+              <h3>Mostrar la imagen procesada</h3>
+              <p>
+                Este parche representa la parcela en la fecha mas reciente. Es una composicion
+                didactica hecha con indices espectrales derivados.
+              </p>
+              <canvas class="demo-canvas demo-canvas-large" id="demo-composite"></canvas>
+              <div class="demo-caption" id="demo-composite-caption">-</div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">3</div>
+            <div class="demo-step-body">
+              <h3>Ver indices y bandas relevantes</h3>
+              <p>
+                Los archivos disponibles contienen indices derivados. Cada indice combina bandas
+                Sentinel-2 distintas para medir vigor, agua, humedad o clorofila.
+              </p>
+              <div class="demo-index-grid" id="demo-index-grid"></div>
+              <div class="chart-wrap">
+                <canvas id="demo-series-chart"></canvas>
+              </div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">4</div>
+            <div class="demo-step-body">
+              <h3>Entrenar, sin entrenar en vivo</h3>
+              <p>
+                La app no entrena durante la demo. Aqui mostramos que el entrenamiento convierte
+                ventanas de 24 fechas en 35 features y alimenta el ensamble E3 Stacking.
+              </p>
+              <div class="demo-model-chain">
+                <span>24 fechas</span><span>5 indices</span><span>35 features</span><span>E3 Stacking</span>
+              </div>
+              <div class="demo-feature-grid" id="demo-feature-grid"></div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">5</div>
+            <div class="demo-step-body">
+              <h3>Diagnostico del modelo</h3>
+              <p>
+                El modelo final combina Random Forest, XGBoost y SVM mediante regresion logistica.
+              </p>
+              <div class="demo-diagnosis" id="demo-diagnosis">Pendiente de cargar.</div>
+              <div class="chart-wrap">
+                <canvas id="demo-prob-chart"></canvas>
+              </div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">6</div>
+            <div class="demo-step-body">
+              <h3>Segmentacion pixel a pixel</h3>
+              <p>
+                La vista SAM2-preview colorea la parcela por pixel usando NDMI reciente:
+                verde = sin estres, amarillo = moderado, rojo = severo.
+              </p>
+              <canvas class="demo-canvas demo-canvas-large" id="demo-mask"></canvas>
+              <div class="demo-mask-legend" id="demo-mask-legend"></div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">7</div>
+            <div class="demo-step-body">
+              <h3>GP + MLE</h3>
+              <p>
+                El Gaussian Process aprende una curva esperada con incertidumbre. MLE significa
+                ajustar los parametros que hacen mas probable el historial observado.
+              </p>
+              <div class="chart-wrap chart-wrap-lg">
+                <canvas id="demo-gp-chart"></canvas>
+              </div>
+              <div class="demo-mini-result" id="demo-gp-summary">Pendiente de calcular.</div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">8</div>
+            <div class="demo-step-body">
+              <h3>Verosimilitud neuronal</h3>
+              <p>
+                La red probabilistica estima que valores eran esperados y calcula que tan probable
+                es la observacion actual bajo esa distribucion.
+              </p>
+              <div class="demo-mini-result" id="demo-likelihood-summary">Pendiente de calcular.</div>
+            </div>
+          </section>
+
+          <section class="demo-step">
+            <div class="demo-step-num">9</div>
+            <div class="demo-step-body">
+              <h3>Resultado final para el usuario</h3>
+              <p>
+                Al final, AguaVerde traduce imagenes satelitales y modelos estadisticos en una
+                decision entendible: que parcela revisar, que tan urgente es y por que.
+              </p>
+              <div class="demo-final-list">
+                <span>Mapa coloreado</span>
+                <span>Diagnostico por parcela</span>
+                <span>Tendencia temporal</span>
+                <span>Segmentacion visual</span>
+                <span>Reporte agronomico</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="demo-glossary">
+          <div class="section-label">Glosario visual</div>
+          <div class="demo-term-grid" id="demo-term-grid"></div>
+        </div>
       </div>
 
       <!-- -- Tab: New location --------------------------------- -->
