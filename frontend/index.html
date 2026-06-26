@@ -460,27 +460,27 @@
               </p>
               <div class="demo-band-guide" aria-label="Guia rapida de bandas Sentinel-2">
                 <div class="demo-band-card">
-                  <strong>B02 Azul</strong>
+                  <strong>B02 Azul <em>Blue</em></strong>
                   <span>Ayuda a corregir atmosfera y da soporte al EVI.</span>
                 </div>
                 <div class="demo-band-card">
-                  <strong>B03 Verde</strong>
+                  <strong>B03 Verde <em>Green</em></strong>
                   <span>Responde a agua y vegetacion; se usa en NDWI.</span>
                 </div>
                 <div class="demo-band-card">
-                  <strong>B04 Rojo</strong>
+                  <strong>B04 Rojo <em>Red</em></strong>
                   <span>Captura absorcion por clorofila; clave en NDVI y EVI.</span>
                 </div>
                 <div class="demo-band-card">
-                  <strong>B05 Red Edge</strong>
+                  <strong>B05 Red Edge <em>Red Edge</em></strong>
                   <span>Sensible a clorofila y estres temprano; base de NDRE.</span>
                 </div>
                 <div class="demo-band-card">
-                  <strong>B08 NIR</strong>
+                  <strong>B08 NIR <em>Near Infrared</em></strong>
                   <span>Mide vigor y estructura vegetal; aparece en casi todos los indices.</span>
                 </div>
                 <div class="demo-band-card">
-                  <strong>B11 SWIR</strong>
+                  <strong>B11 SWIR <em>Short-wave Infrared</em></strong>
                   <span>Observa humedad de hoja y dosel; es clave para NDMI.</span>
                 </div>
               </div>
@@ -535,6 +535,23 @@
               </p>
               <canvas class="demo-canvas demo-canvas-large" id="demo-mask"></canvas>
               <div class="demo-mask-legend" id="demo-mask-legend"></div>
+              <div class="demo-sam2-variant-grid">
+                <div class="demo-sam2-variant-card">
+                  <strong>Segmentacion normal</strong>
+                  <canvas id="demo-sam2-normal"></canvas>
+                  <p>Raster NDMI completo sobre la imagen procesada.</p>
+                </div>
+                <div class="demo-sam2-variant-card">
+                  <strong>Overlap ajustado</strong>
+                  <canvas id="demo-sam2-overlap"></canvas>
+                  <p>Reduce la huella visual; no cambia el modelo.</p>
+                </div>
+                <div class="demo-sam2-variant-card">
+                  <strong>GP + MLE</strong>
+                  <canvas id="demo-sam2-gpmle"></canvas>
+                  <p id="demo-sam2-gpmle-caption">Pendiente de calcular la lectura temporal.</p>
+                </div>
+              </div>
               <div class="demo-sam2-grid">
                 <div class="demo-sam2-card">
                   <strong>Pixeles visibles</strong>
@@ -674,6 +691,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
-  <script src="app.js?v=gp-mle-sam2-exp-e-20260624"></script>
+  <script src="app.js?v=demo-sam2-variants-20260626"></script>
 </body>
 </html>

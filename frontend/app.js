@@ -1511,7 +1511,9 @@ function setFilterActive(cls) {
    DEMO GUIADA
 ============================================================== */
 let demoLoadedParcel = null;
+let demoCurrentData = null;
 let demoCurrentMask = null;
+let demoCurrentTrend = null;
 
 const DEMO_STRESS_LABELS = ['Sin estres', 'Moderado', 'Severo'];
 const DEMO_STRESS_COUNT_KEYS = ['sin_estres', 'moderado', 'severo'];
@@ -1519,30 +1521,35 @@ const DEMO_STRESS_COUNT_KEYS = ['sin_estres', 'moderado', 'severo'];
 const DEMO_INDEX_META = {
   NDVI: {
     title: 'NDVI',
+    fullName: 'Normalized Difference Vegetation Index',
     bands: 'B08 NIR + B04 rojo',
     meaning: 'Mide vigor vegetal: valores altos suelen indicar vegetacion sana y densa.',
     palette: 'green',
   },
   NDWI: {
     title: 'NDWI',
+    fullName: 'Normalized Difference Water Index',
     bands: 'B03 verde + B08 NIR',
     meaning: 'Mide contenido de agua en vegetacion. Ayuda a detectar cambios de humedad.',
     palette: 'blue',
   },
   NDMI: {
     title: 'NDMI',
+    fullName: 'Normalized Difference Moisture Index',
     bands: 'B08 NIR + B11 SWIR',
     meaning: 'Indice clave: estima humedad de hoja y dosel. Si baja, puede indicar estres hidrico.',
     palette: 'teal',
   },
   NDRE: {
     title: 'NDRE',
+    fullName: 'Normalized Difference Red Edge Index',
     bands: 'B08 NIR + B05 red edge',
     meaning: 'Observa clorofila y senales tempranas de estres antes de que sean visibles.',
     palette: 'purple',
   },
   EVI: {
     title: 'EVI',
+    fullName: 'Enhanced Vegetation Index',
     bands: 'B08 NIR + B04 rojo + B02 azul',
     meaning: 'Refuerza la lectura de vigor en vegetacion densa, donde NDVI puede saturarse.',
     palette: 'orange',
@@ -1640,6 +1647,9 @@ async function loadDemoParcel() {
   setText('demo-status', 'Cargando artefactos locales y preparando visualizaciones...');
 
   try {
+    demoCurrentData = null;
+    demoCurrentMask = null;
+    demoCurrentTrend = null;
     const res = await fetch(`${API}/demo/parcel/${encodeURIComponent(parcelId)}`);
     const demo = await readJsonOrThrow(res);
     demoLoadedParcel = demo.parcel_id;
@@ -1671,6 +1681,7 @@ async function loadDemoParcel() {
 }
 
 function renderDemoBase(demo) {
+  demoCurrentData = demo;
   demoCurrentMask = demo.mask;
   const src = demo.source;
   setText('demo-source-name', src.satellite);
@@ -1689,6 +1700,7 @@ function renderDemoBase(demo) {
   renderDemoFeatures(demo);
   drawMaskCanvas('demo-mask', demo.mask);
   renderDemoMaskLegend(demo.mask);
+  renderDemoSam2Variants(demo, demoCurrentTrend);
   renderDemoSam2Explanation(demo);
 }
 
@@ -1697,7 +1709,10 @@ function renderDemoIndexGrid(demo) {
   grid.innerHTML = Object.entries(DEMO_INDEX_META).map(([key, meta]) => `
     <div class="demo-index-card">
       <div class="demo-index-head">
-        <strong>${meta.title}</strong>
+        <div class="demo-index-title">
+          <strong>${meta.title}</strong>
+          <em>${meta.fullName}</em>
+        </div>
         <span>${meta.bands}</span>
       </div>
       <canvas id="demo-idx-${key}"></canvas>
@@ -1963,6 +1978,9 @@ async function loadDemoTrend(parcelId) {
 }
 
 function renderDemoTrend(data) {
+  demoCurrentTrend = data;
+  if (demoCurrentData) renderDemoSam2Variants(demoCurrentData, data);
+
   const ctx = document.getElementById('demo-gp-chart').getContext('2d');
   if (demoGpChart) demoGpChart.destroy();
   const historyPoints = data.history.days.map((day, i) => ({ x: day, y: data.history.values[i] }));
@@ -2011,6 +2029,8 @@ function renderDemoTrend(data) {
 }
 
 function renderDemoTrendError(err) {
+  demoCurrentTrend = null;
+  if (demoCurrentData) renderDemoSam2Variants(demoCurrentData, null);
   setText('demo-gp-summary', `No se pudo calcular GP/MLE: ${err.message}`);
 }
 
@@ -2045,6 +2065,102 @@ function renderDemoMaskLegend(mask) {
   `).join('');
 }
 
+function renderDemoSam2Variants(demo, trend) {
+  if (!demo?.mask || !demo?.indices) return;
+
+  drawDemoSam2VariantCanvas('demo-sam2-normal', demo, { mode: 'normal' });
+  drawDemoSam2VariantCanvas('demo-sam2-overlap', demo, { mode: 'overlap' });
+
+  const trendClass = getDemoTrendStressClass(trend);
+  drawDemoSam2VariantCanvas('demo-sam2-gpmle', demo, {
+    mode: 'gpmle',
+    trendClass,
+  });
+
+  const trendBlock = getDemoTrendBlock(trend);
+  const z = trendBlock?.last_observation?.z;
+  const label = trendClass == null ? null : DEMO_STRESS_LABELS[trendClass];
+  const caption = label
+    ? `Usa la clase temporal ${label.toLowerCase()}${z != null ? ` (z=${Number(z).toFixed(2)})` : ''} para suavizar la interpretacion.`
+    : 'Pendiente/no disponible: se actualiza cuando llega GP + MLE.';
+  setText('demo-sam2-gpmle-caption', caption);
+}
+
+function drawDemoSam2VariantCanvas(id, demo, options = {}) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+
+  const base = demo.indices.NDVI.grid;
+  const height = base.length;
+  const width = base[0].length;
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  paintDemoComposite(ctx, demo.indices, width, height);
+
+  const mask = demo.mask;
+  const isOverlap = options.mode === 'overlap';
+  const isGpMle = options.mode === 'gpmle';
+  const scale = isOverlap ? SAM2_ADJUSTED_BOUNDS_SCALE / SAM2_BOUNDS_SCALE : 1;
+  const targetW = Math.max(1, Math.round(width * scale));
+  const targetH = Math.max(1, Math.round(height * scale));
+  const x0 = Math.floor((width - targetW) / 2);
+  const y0 = Math.floor((height - targetH) / 2);
+  const alpha = isGpMle ? .72 : .62;
+
+  for (let y = y0; y < y0 + targetH; y++) {
+    const my = Math.min(mask.height - 1, Math.max(0, Math.floor(((y - y0) / targetH) * mask.height)));
+    for (let x = x0; x < x0 + targetW; x++) {
+      const mx = Math.min(mask.width - 1, Math.max(0, Math.floor(((x - x0) / targetW) * mask.width)));
+      const rawClass = mask.classes[my][mx];
+      const cls = isGpMle && options.trendClass != null
+        ? calibratedMaskClass(rawClass, options.trendClass)
+        : rawClass;
+      if (![0, 1, 2].includes(cls)) continue;
+      ctx.fillStyle = demoMaskRgba(cls, alpha);
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  if (isOverlap) {
+    ctx.strokeStyle = 'rgba(42, 84, 50, .85)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + .5, y0 + .5, targetW - 1, targetH - 1);
+  }
+
+  if (isGpMle) {
+    const cls = options.trendClass;
+    ctx.fillStyle = cls == null ? 'rgba(255, 255, 255, .65)' : demoMaskRgba(cls, .9);
+    ctx.fillRect(0, 0, width, Math.max(2, Math.round(height * .08)));
+  }
+}
+
+function demoMaskRgba(cls, alpha) {
+  const colors = {
+    0: [56, 142, 60],
+    1: [249, 168, 37],
+    2: [198, 40, 40],
+  };
+  const rgb = colors[cls] || [158, 158, 158];
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+function getDemoTrendBlock(trend) {
+  if (!trend || trend.error) return null;
+  return trend.group || trend;
+}
+
+function getDemoTrendStressClass(trend) {
+  const block = getDemoTrendBlock(trend);
+  const label = normalizeDemoStressLabel(block?.last_observation?.label);
+  return {
+    sinestres: 0,
+    moderado: 1,
+    severo: 2,
+  }[label] ?? null;
+}
+
 function renderDemoSam2Explanation(demo) {
   const el = document.getElementById('demo-sam2-gpmle-note');
   if (!el) return;
@@ -2077,15 +2193,20 @@ function renderDemoGlossary() {
 
 function drawCompositeCanvas(id, indices) {
   const ndvi = indices.NDVI.grid;
-  const ndmi = indices.NDMI.grid;
-  const evi = indices.EVI.grid;
-  const ndwi = indices.NDWI.grid;
   const canvas = document.getElementById(id);
   const h = ndvi.length;
   const w = ndvi[0].length;
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
+  paintDemoComposite(ctx, indices, w, h);
+}
+
+function paintDemoComposite(ctx, indices, w, h) {
+  const ndvi = indices.NDVI.grid;
+  const ndmi = indices.NDMI.grid;
+  const evi = indices.EVI.grid;
+  const ndwi = indices.NDWI.grid;
   const img = ctx.createImageData(w, h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

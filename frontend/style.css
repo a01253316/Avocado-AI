@@ -339,6 +339,13 @@ html, body {
   margin-bottom: 3px;
   color: var(--text);
 }
+.demo-band-card em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
 .demo-band-card span {
   display: block;
   font-size: 10.5px;
@@ -364,7 +371,18 @@ html, body {
   align-items: center;
   margin-bottom: 7px;
 }
-.demo-index-head strong { font-size: 13px; }
+.demo-index-title strong {
+  display: block;
+  font-size: 13px;
+}
+.demo-index-title em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1.25;
+  color: var(--text-3);
+}
 .demo-index-head span {
   font-size: 10px;
   color: var(--text-3);
@@ -464,6 +482,40 @@ html, body {
   background: var(--surface-2);
   padding: 7px 8px;
   font-size: 11px;
+  color: var(--text-2);
+}
+.demo-sam2-variant-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+.demo-sam2-variant-card {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  padding: 6px;
+}
+.demo-sam2-variant-card strong {
+  display: block;
+  min-height: 25px;
+  font-size: 10.5px;
+  line-height: 1.18;
+  color: var(--text);
+}
+.demo-sam2-variant-card canvas {
+  width: 100%;
+  aspect-ratio: 1.1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #eef1e8;
+  margin-top: 5px;
+  image-rendering: pixelated;
+}
+.demo-sam2-variant-card p {
+  margin-top: 5px;
+  font-size: 9.5px;
+  line-height: 1.35;
   color: var(--text-2);
 }
 .demo-sam2-grid {
