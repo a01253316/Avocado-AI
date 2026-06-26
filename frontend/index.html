@@ -458,6 +458,32 @@
                 Los archivos disponibles contienen indices derivados. Cada indice combina bandas
                 Sentinel-2 distintas para medir vigor, agua, humedad o clorofila.
               </p>
+              <div class="demo-band-guide" aria-label="Guia rapida de bandas Sentinel-2">
+                <div class="demo-band-card">
+                  <strong>B02 Azul</strong>
+                  <span>Ayuda a corregir atmosfera y da soporte al EVI.</span>
+                </div>
+                <div class="demo-band-card">
+                  <strong>B03 Verde</strong>
+                  <span>Responde a agua y vegetacion; se usa en NDWI.</span>
+                </div>
+                <div class="demo-band-card">
+                  <strong>B04 Rojo</strong>
+                  <span>Captura absorcion por clorofila; clave en NDVI y EVI.</span>
+                </div>
+                <div class="demo-band-card">
+                  <strong>B05 Red Edge</strong>
+                  <span>Sensible a clorofila y estres temprano; base de NDRE.</span>
+                </div>
+                <div class="demo-band-card">
+                  <strong>B08 NIR</strong>
+                  <span>Mide vigor y estructura vegetal; aparece en casi todos los indices.</span>
+                </div>
+                <div class="demo-band-card">
+                  <strong>B11 SWIR</strong>
+                  <span>Observa humedad de hoja y dosel; es clave para NDMI.</span>
+                </div>
+              </div>
               <div class="demo-index-grid" id="demo-index-grid"></div>
               <div class="chart-wrap">
                 <canvas id="demo-series-chart"></canvas>
@@ -486,9 +512,14 @@
               <h3>Diagnostico del modelo</h3>
               <p>
                 El modelo final combina Random Forest, XGBoost y SVM mediante regresion logistica.
+                E3 clasifica la parcela completa con una ventana temporal; SAM2-preview reparte
+                pixeles dentro de la parcela usando NDMI reciente.
               </p>
+              <div class="demo-consistency-note" id="demo-consistency-note">
+                Carga una parcela para comparar la lectura global con la distribucion espacial.
+              </div>
               <div class="demo-diagnosis" id="demo-diagnosis">Pendiente de cargar.</div>
-              <div class="chart-wrap">
+              <div class="chart-wrap" id="demo-prob-wrap">
                 <canvas id="demo-prob-chart"></canvas>
               </div>
             </div>
@@ -504,6 +535,27 @@
               </p>
               <canvas class="demo-canvas demo-canvas-large" id="demo-mask"></canvas>
               <div class="demo-mask-legend" id="demo-mask-legend"></div>
+              <div class="demo-sam2-grid">
+                <div class="demo-sam2-card">
+                  <strong>Pixeles visibles</strong>
+                  <span>Los filtros verde, amarillo y rojo permiten aislar zonas sanas, moderadas o severas sin recalcular la mascara.</span>
+                </div>
+                <div class="demo-sam2-card">
+                  <strong>Diagnostico Sentinel</strong>
+                  <span>Se filtra por la clase derivada de NDMI: bajo estres queda verde, caidas moderadas amarillas y caidas fuertes rojas.</span>
+                </div>
+                <div class="demo-sam2-card">
+                  <strong>Coordenadas visibles</strong>
+                  <span>Los marcadores del mapa siguen la misma visibilidad para que el panel conecte pixeles, parcela y ubicacion.</span>
+                </div>
+                <div class="demo-sam2-card">
+                  <strong>Overlap ajustado</strong>
+                  <span>El overlap se reduce cuando la mascara tapa demasiado terreno vecino; asi la comparacion visual queda centrada en la parcela.</span>
+                </div>
+              </div>
+              <div class="demo-gp-mle-link" id="demo-sam2-gpmle-note">
+                GP + MLE recalibra la lectura temporal: compara la mascara reciente contra una curva esperada y su incertidumbre.
+              </div>
             </div>
           </section>
 

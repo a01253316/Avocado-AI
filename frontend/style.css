@@ -321,6 +321,30 @@ html, body {
   color: var(--text-3);
   margin-top: 5px;
 }
+.demo-band-guide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 10px;
+}
+.demo-band-card {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 8px;
+}
+.demo-band-card strong {
+  display: block;
+  font-size: 11.5px;
+  margin-bottom: 3px;
+  color: var(--text);
+}
+.demo-band-card span {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-2);
+}
 .demo-index-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -406,6 +430,28 @@ html, body {
   padding: 9px;
   font-size: 12px;
 }
+.demo-diagnosis-card span { color: var(--text-2); }
+.demo-diagnosis-card strong { text-align: right; }
+.demo-consistency-note {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 8px 9px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+  margin-top: 9px;
+}
+.demo-consistency-note.consistent {
+  border-color: #CFE8D0;
+  background: var(--green-bg);
+  color: var(--green-dark);
+}
+.demo-consistency-note.complementary {
+  border-color: #F4D78A;
+  background: #FFF8E1;
+  color: #6D4C00;
+}
 .demo-mask-legend {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -419,6 +465,40 @@ html, body {
   padding: 7px 8px;
   font-size: 11px;
   color: var(--text-2);
+}
+.demo-sam2-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 9px;
+}
+.demo-sam2-card {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+}
+.demo-sam2-card strong {
+  display: block;
+  font-size: 11.5px;
+  margin-bottom: 3px;
+  color: var(--text);
+}
+.demo-sam2-card span {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.demo-gp-mle-link {
+  border: 1px solid #CFE8D0;
+  border-radius: 8px;
+  background: var(--green-bg);
+  color: var(--green-dark);
+  padding: 8px 9px;
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 .demo-final-list {
   display: grid;

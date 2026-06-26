@@ -1511,6 +1511,10 @@ function setFilterActive(cls) {
    DEMO GUIADA
 ============================================================== */
 let demoLoadedParcel = null;
+let demoCurrentMask = null;
+
+const DEMO_STRESS_LABELS = ['Sin estres', 'Moderado', 'Severo'];
+const DEMO_STRESS_COUNT_KEYS = ['sin_estres', 'moderado', 'severo'];
 
 const DEMO_INDEX_META = {
   NDVI: {
@@ -1667,6 +1671,7 @@ async function loadDemoParcel() {
 }
 
 function renderDemoBase(demo) {
+  demoCurrentMask = demo.mask;
   const src = demo.source;
   setText('demo-source-name', src.satellite);
   setText(
@@ -1684,6 +1689,7 @@ function renderDemoBase(demo) {
   renderDemoFeatures(demo);
   drawMaskCanvas('demo-mask', demo.mask);
   renderDemoMaskLegend(demo.mask);
+  renderDemoSam2Explanation(demo);
 }
 
 function renderDemoIndexGrid(demo) {
@@ -1769,12 +1775,24 @@ async function loadDemoDiagnosis(parcelId) {
 }
 
 function renderDemoDiagnosis(data) {
-  const stress = data.stress;
+  const stress = data.stress || {};
   const el = document.getElementById('demo-diagnosis');
+  const cls = Number(stress.class);
+  const label = DEMO_STRESS_LABELS[cls] || stress.label || 'Sin clasificar';
+  const confidence = Math.round(clamp01(stress.confidence) * 100);
+  const dominant = getDemoDominantMaskClass(demoCurrentMask);
+  const segmentText = dominant
+    ? `${dominant.label} (${Math.round(dominant.percent)}% de pixeles validos)`
+    : 'Sin mascara disponible';
+
   el.innerHTML = `
     <div class="demo-diagnosis-card">
-      <span>Clase estimada</span>
-      <strong>${escapeHtml(stress.label)} (${Math.round(stress.confidence * 100)}%)</strong>
+      <span>Diagnostico global E3</span>
+      <strong>${escapeHtml(label)} (${confidence}%)</strong>
+    </div>
+    <div class="demo-diagnosis-card">
+      <span>Segmentacion dominante</span>
+      <strong>${escapeHtml(segmentText)}</strong>
     </div>
     <div class="demo-diagnosis-card">
       <span>Ventana temporal</span>
@@ -1782,9 +1800,30 @@ function renderDemoDiagnosis(data) {
     </div>
   `;
 
-  const labels = ['Sin estres', 'Moderado', 'Severo'];
-  const probValues = Object.values(stress.probabilities || {});
-  const probs = labels.map((_, i) => Math.round(((probValues[i] ?? 0) || 0) * 100));
+  const probValues = getDemoProbabilityValues(stress);
+  const e3Prob = Number.isFinite(cls) ? probValues[cls] : null;
+  const maskShare = Number.isFinite(cls) ? getDemoMaskShare(demoCurrentMask, cls) : null;
+  const classDistance = dominant && Number.isFinite(cls) ? Math.abs(cls - dominant.classId) : null;
+  const percentGap = e3Prob != null && maskShare != null
+    ? Math.abs(e3Prob * 100 - maskShare)
+    : null;
+  const showProbChart = classDistance === 0 && percentGap != null && percentGap <= 25;
+
+  renderDemoConsistencyNote({ dominant, cls, confidence, maskShare, percentGap, showProbChart });
+
+  const wrap = document.getElementById('demo-prob-wrap');
+  if (!showProbChart) {
+    if (demoProbChart) {
+      demoProbChart.destroy();
+      demoProbChart = null;
+    }
+    wrap?.classList.add('hidden');
+    return;
+  }
+
+  wrap?.classList.remove('hidden');
+  const labels = DEMO_STRESS_LABELS;
+  const probs = labels.map((_, i) => Math.round((probValues[i] || 0) * 100));
   const ctx = document.getElementById('demo-prob-chart').getContext('2d');
   if (demoProbChart) demoProbChart.destroy();
   demoProbChart = new Chart(ctx, {
@@ -1810,9 +1849,111 @@ function renderDemoDiagnosis(data) {
 }
 
 function renderDemoDiagnosisError(err) {
+  const note = document.getElementById('demo-consistency-note');
+  if (note) {
+    note.className = 'demo-consistency-note complementary';
+    note.textContent = 'La comparacion se omite porque no se pudo ejecutar el diagnostico global.';
+  }
+  const wrap = document.getElementById('demo-prob-wrap');
+  wrap?.classList.add('hidden');
+  if (demoProbChart) {
+    demoProbChart.destroy();
+    demoProbChart = null;
+  }
   document.getElementById('demo-diagnosis').innerHTML = `
     <div class="demo-mini-result">No se pudo calcular diagnostico: ${escapeHtml(err.message)}</div>
   `;
+}
+
+function renderDemoConsistencyNote({ dominant, cls, confidence, maskShare, percentGap, showProbChart }) {
+  const note = document.getElementById('demo-consistency-note');
+  if (!note) return;
+
+  note.className = 'demo-consistency-note';
+  if (!dominant || !Number.isFinite(cls)) {
+    note.classList.add('complementary');
+    note.textContent = 'Lecturas complementarias: aun no hay una mascara valida para comparar contra el diagnostico global.';
+    return;
+  }
+
+  const globalLabel = DEMO_STRESS_LABELS[cls] || 'Sin clasificar';
+  const base = `Diagnostico global: ${globalLabel} (${confidence}%). Segmentacion dominante: ${dominant.label} (${Math.round(dominant.percent)}%).`;
+
+  if (showProbChart) {
+    note.classList.add('consistent');
+    note.textContent = `${base} Las clases coinciden y la barra de probabilidades se muestra como apoyo visual.`;
+    return;
+  }
+
+  note.classList.add('complementary');
+  if (cls === dominant.classId) {
+    const gapText = percentGap == null ? '' : ` La diferencia numerica es de ${Math.round(percentGap)} puntos, asi que no se compara como porcentaje directo.`;
+    note.textContent = `${base} Coinciden en clase, pero siguen siendo lecturas complementarias: E3 resume la ventana temporal completa; SAM2-preview muestra distribucion espacial por NDMI reciente.${gapText}`;
+    return;
+  }
+
+  if (Math.abs(cls - dominant.classId) <= 1) {
+    const gapText = percentGap == null ? '' : ` La diferencia numerica es de ${Math.round(percentGap)} puntos, asi que no se compara como porcentaje directo.`;
+    note.textContent = `${base} Son lecturas cercanas pero complementarias: E3 resume la ventana temporal completa; SAM2-preview muestra distribucion espacial por NDMI reciente.${gapText}`;
+    return;
+  }
+
+  const shareText = maskShare == null ? '' : ` La clase global ocupa ${Math.round(maskShare)}% de los pixeles validos en la mascara.`;
+  note.textContent = `${base} Estas lecturas son complementarias: E3 resume la ventana temporal completa; SAM2-preview muestra distribucion espacial por NDMI reciente.${shareText}`;
+}
+
+function getDemoProbabilityValues(stress) {
+  const probs = stress.probabilities || {};
+  const keys = Object.keys(probs);
+  const direct = DEMO_STRESS_LABELS.map(label => {
+    const exact = toDemoProbability(probs[label]);
+    if (exact != null) return exact;
+    const normalizedLabel = normalizeDemoStressLabel(label);
+    const foundKey = keys.find(key => normalizeDemoStressLabel(key) === normalizedLabel);
+    return foundKey ? toDemoProbability(probs[foundKey]) : null;
+  });
+
+  if (direct.every(value => value != null)) return direct;
+
+  const ordered = Object.values(probs).map(toDemoProbability);
+  return DEMO_STRESS_LABELS.map((_, i) => direct[i] ?? ordered[i] ?? 0);
+}
+
+function toDemoProbability(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? clamp01(n) : null;
+}
+
+function normalizeDemoStressLabel(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z]/g, '');
+}
+
+function getDemoDominantMaskClass(mask) {
+  const entries = DEMO_STRESS_COUNT_KEYS.map((key, classId) => ({
+    key,
+    classId,
+    label: DEMO_STRESS_LABELS[classId],
+    count: Number(mask?.counts?.[key]) || 0,
+  }));
+  const validTotal = entries.reduce((sum, item) => sum + item.count, 0);
+  if (!validTotal) return null;
+  const dominant = entries.reduce((best, item) => (item.count > best.count ? item : best), entries[0]);
+  return {
+    ...dominant,
+    percent: (dominant.count / validTotal) * 100,
+    validTotal,
+  };
+}
+
+function getDemoMaskShare(mask, classId) {
+  const entries = DEMO_STRESS_COUNT_KEYS.map(key => Number(mask?.counts?.[key]) || 0);
+  const validTotal = entries.reduce((sum, count) => sum + count, 0);
+  if (!validTotal || classId < 0 || classId >= entries.length) return null;
+  return (entries[classId] / validTotal) * 100;
 }
 
 async function loadDemoTrend(parcelId) {
@@ -1902,6 +2043,25 @@ function renderDemoMaskLegend(mask) {
   document.getElementById('demo-mask-legend').innerHTML = items.map(([label, count, color]) => `
     <span><b style="color:${color}">${label}</b>: ${Math.round((count / total) * 100)}%</span>
   `).join('');
+}
+
+function renderDemoSam2Explanation(demo) {
+  const el = document.getElementById('demo-sam2-gpmle-note');
+  if (!el) return;
+
+  const dominant = getDemoDominantMaskClass(demo.mask);
+  const thresholds = demo.mask?.thresholds || {};
+  const group = demo.group
+    ? ` Al usar Grupo (Terreno similar), GP/MLE compara contra ${demo.group.n_members} parcelas del grupo ${demo.group.group_id}.`
+    : ' Si no existe grupo de terreno, GP/MLE usa solo la historia local disponible.';
+  const domText = dominant
+    ? ` En este ejemplo domina ${dominant.label.toLowerCase()} con ${Math.round(dominant.percent)}% de pixeles validos.`
+    : '';
+  const thresholdText = thresholds.moderado != null && thresholds.severo != null
+    ? ` Umbrales NDMI: moderado <= ${thresholds.moderado}, severo <= ${thresholds.severo}.`
+    : '';
+
+  el.textContent = `GP + MLE recalibra la lectura temporal: compara la mascara reciente contra una curva esperada y su incertidumbre.${domText}${thresholdText}${group}`;
 }
 
 function renderDemoGlossary() {
