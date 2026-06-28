@@ -83,9 +83,11 @@ integrative-project/
 |-- notebooks/                    # Notebooks de exploración, avances y salidas asociadas
 |
 |-- docs/
-|   |-- reports/                  # Reportes finales y documentación académica
-|   |-- proceso_ejecucion_ollama.md
-|   `-- sam2_plan.md
+|   |-- README.md                 # Índice de documentación
+|   |-- guides/                   # Guías de instalación y ejecución
+|   |-- plans/                    # Planes técnicos
+|   |-- reports/                  # Reportes finales y experimentos
+|   `-- meetings/                 # Material de reuniones
 |
 |-- reports/
 |   `-- metrics/                  # Métricas exportadas para análisis y gráficas
@@ -100,6 +102,9 @@ integrative-project/
 |-- .env.example
 `-- README.md
 ```
+
+La documentación técnica y académica está organizada en el
+[índice de documentación](docs/README.md).
 
 ---
 
